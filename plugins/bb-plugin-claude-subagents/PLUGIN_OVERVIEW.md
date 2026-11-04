@@ -1,0 +1,1 @@
+See Claude Code background agents on a thread: status, usage, chat, and thinking. The Subagents tab and `bb claude-subagents` read the primary host's Claude session files. Remote hosts are not supported.
