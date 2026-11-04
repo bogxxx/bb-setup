@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import type { MatrixCell, Report, Usage } from "./report.js";
-import { machineInMatrix } from "./local-providers.js";
+import { copilotProfiles, machineInMatrix } from "./local-providers.js";
 
 const require = createRequire(import.meta.url);
 
@@ -90,11 +90,22 @@ function sumUsage(list: Usage[]): Usage {
   return out;
 }
 
+/** A second Copilot account's threads (acp-github-copilot-<key>) count under their own seat: copilot#<key>. */
 function columnOf(providerId: string): string | null {
+  for (const profile of copilotProfiles()) {
+    if (providerId === `acp-github-copilot-${profile.key}`) return `copilot#${profile.key}`;
+  }
   const known = COLUMN_OF[providerId];
   if (known !== undefined) return known;
   if (providerId.startsWith("acp-")) return providerId.slice(4);
   return providerId === "" ? null : providerId;
+}
+
+/** The totals key of a matrix column: a second Copilot account's seat has its own. */
+function columnKey(column: { provider: string; name: string }): string {
+  if (column.provider !== "copilot") return column.provider;
+  const profile = copilotProfiles().find((item) => item.login !== null && item.login === column.name);
+  return profile === undefined ? column.provider : `copilot#${profile.key}`;
 }
 
 function bucket(totals: Map<string, Usage>, hostId: string, providerId: string): Usage | null {
@@ -193,17 +204,23 @@ function ensureTokenColumns(report: Report, totals: Map<string, Usage>): void {
   for (const [key, usage] of totals) {
     if (!positive(usage)) continue;
     const provider = key.split("\0")[1] ?? "";
-    if (provider === "" || providers.includes(provider) || columns.some((column) => column.provider === provider)) continue;
+    if (provider === "" || providers.includes(provider) || columns.some((column) => columnKey(column) === provider)) continue;
     providers.push(provider);
   }
-  for (const provider of providers) {
+  for (const key of providers) {
+    const hash = key.indexOf("#");
+    const provider = hash === -1 ? key : key.slice(0, hash);
+    const login = hash === -1 ? null : (copilotProfiles().find((item) => item.key === key.slice(hash + 1))?.login ?? null);
     const group = report.team.providers.find((item) => item.provider === provider);
-    const account = group?.accounts.find((item) => item.subscription) ?? group?.accounts[0];
+    const account =
+      login !== null
+        ? group?.accounts.find((item) => item.name === login)
+        : (group?.accounts.find((item) => item.subscription) ?? group?.accounts[0]);
     const main = account?.quota?.windows.find((window) => window.main) ?? account?.quota?.windows[0];
     columns.push({
       provider,
       label: account?.label ?? null,
-      name: account?.name ?? provider,
+      name: account?.name ?? login ?? provider,
       no_quota: false,
       state: account?.state ?? "unknown",
       percent: main?.percent ?? null,
@@ -298,12 +315,13 @@ export function fillMatrixFromBurn(report: Report, dataDir: string, now: number,
     const used = new Set<string>();
     let touched = false;
     columns.forEach((column, index) => {
-      if (used.has(column.provider)) return;
-      const usage = totals.get(`${row.device_id}\0${column.provider}`);
+      const key = columnKey(column);
+      if (used.has(key)) return;
+      const usage = totals.get(`${row.device_id}\0${key}`);
       if (usage === undefined || !positive(usage)) return;
       const cell = row.cells[index];
       if (cell === undefined) return;
-      used.add(column.provider);
+      used.add(key);
       cell.usage = { today: usage.today, "7d": usage["7d"], "30d": usage["30d"], "90d": usage["90d"] };
       cell.burn = null;
       cell.burn_share = null;

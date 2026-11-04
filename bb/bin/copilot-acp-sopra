@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # bb launcher for the SopraSteria GitHub Copilot account (separate gh config dir, so the
 # normal gh login for bogxxx and the regular copilot-acp agent are untouched).
-export COPILOT_GH_CONFIG_DIR="${COPILOT_GH_CONFIG_DIR:-$HOME/.config/gh-soprasteria}"
+export COPILOT_GH_CONFIG_DIR="${COPILOT_GH_CONFIG_DIR:-$HOME/.config/gh-sopra}"
 export COPILOT_PROFILE=sopra
 exec "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/copilot-acp" "$@"

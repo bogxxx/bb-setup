@@ -7,7 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { quotaLogins } from "./local-providers.js";
+import { copilotProfileQuota, copilotProfiles, quotaLogins } from "./local-providers.js";
 
 export interface MeasuredWindow {
   name: string;
@@ -397,6 +397,20 @@ async function measureNow(budgetMs: number): Promise<MeasuredUsage> {
     push(copilot());
   } catch {
     // This machine has no readable Copilot login.
+  }
+  try {
+    for (const profile of copilotProfiles()) {
+      const quota = copilotProfileQuota(profile);
+      if (quota === null) continue;
+      push({
+        provider: "copilot",
+        name: quota.name,
+        plan: quota.plan,
+        windows: quota.windows.map((w) => ({ name: w.name, percentUsed: w.percent, resetsAt: w.resets_at })),
+      });
+    }
+  } catch {
+    // A second Copilot account did not answer.
   }
   try {
     for (const item of quotaLogins()) push(item);

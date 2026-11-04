@@ -2,7 +2,7 @@
 // one subscription on the page: the bars are what is left, and when it resets.
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { stepLimit } from "./budget.js";
@@ -71,6 +71,93 @@ function card(name: string, device: string, windows: Window[], extra: Partial<Te
     last_active_at: null,
     no_reading: extra.no_reading ?? null,
   };
+}
+
+function copilot(device: string): TeamAccount | null {
+  const gh = spawnSync(
+    "gh",
+    ["api", "/copilot_internal/user", "--jq", "{plan:.copilot_plan,reset:.quota_reset_date_utc,premium:.quota_snapshots.premium_interactions}"],
+    { encoding: "utf8", timeout: 20_000, windowsHide: true },
+  );
+  if (gh.status !== 0 || !gh.stdout.trim()) return null;
+  let parsed: { plan?: string; reset?: string; premium?: { credits_used?: number; entitlement?: number; unlimited?: boolean } };
+  try {
+    parsed = JSON.parse(gh.stdout);
+  } catch {
+    return null;
+  }
+  const premium = parsed.premium;
+  if (premium == null) return null;
+  const entitlement = num(premium.entitlement);
+  const used = entitlement > 0 ? (num(premium.credits_used) / entitlement) * 100 : 0;
+  return card("premium", device, [meter("premium", used, parsed.reset ?? null, true)], { plan: parsed.plan ?? null });
+}
+
+/**
+ * A second GitHub account with its own Copilot seat, logged in with `gh` into its own config
+ * folder ~/.config/gh-<key> (so the normal gh login is untouched). The key is also the suffix of
+ * the bb agent id acp-github-copilot-<key>, which ties its threads' tokens to this account.
+ */
+export interface CopilotProfile {
+  key: string;
+  dir: string;
+  login: string | null;
+}
+
+export function copilotProfiles(): CopilotProfile[] {
+  const base = path.join(os.homedir(), ".config");
+  let names: string[] = [];
+  try {
+    names = readdirSync(base);
+  } catch {
+    return [];
+  }
+  const out: CopilotProfile[] = [];
+  for (const name of names.sort()) {
+    if (!name.startsWith("gh-") || name.length <= 3) continue;
+    const dir = path.join(base, name);
+    const hosts = path.join(dir, "hosts.yml");
+    if (!existsSync(hosts)) continue;
+    let login: string | null = null;
+    try {
+      login = /^\s*user:\s*(\S+)/m.exec(readFileSync(hosts, "utf8"))?.[1] ?? null;
+    } catch {
+      login = null;
+    }
+    out.push({ key: name.slice(3), dir, login });
+  }
+  return out;
+}
+
+/** The Copilot quota of a profile's account, or null when it has no seat or gh cannot reach GitHub. */
+export function copilotProfileQuota(profile: CopilotProfile): { name: string; plan: string | null; windows: Window[] } | null {
+  const env: Record<string, string | undefined> = { ...process.env, GH_CONFIG_DIR: profile.dir };
+  delete env.GH_TOKEN;
+  delete env.GITHUB_TOKEN;
+  const limit = stepLimit(20_000);
+  if (limit === null) return null;
+  const run = spawnSync("gh", ["api", "/copilot_internal/user"], { encoding: "utf8", timeout: limit, windowsHide: true, env });
+  if (run.status !== 0 || !run.stdout.trim()) return null;
+  let body: {
+    login?: string;
+    copilot_plan?: string;
+    quota_reset_date_utc?: string;
+    quota_snapshots?: Record<string, { unlimited?: boolean; has_quota?: boolean; entitlement?: number; percent_remaining?: number } | undefined>;
+  };
+  try {
+    body = JSON.parse(run.stdout);
+  } catch {
+    return null;
+  }
+  const name = (body.login ?? profile.login ?? "").trim();
+  if (name === "") return null;
+  const windows: Window[] = [];
+  for (const [label, snap] of Object.entries(body.quota_snapshots ?? {})) {
+    if (snap === undefined || snap.unlimited || !snap.has_quota || num(snap.entitlement) <= 0) continue;
+    if (typeof snap.percent_remaining !== "number") continue;
+    windows.push(meter(label, 100 - snap.percent_remaining, body.quota_reset_date_utc ?? null, windows.length === 0));
+  }
+  return windows.length === 0 ? null : { name, plan: body.copilot_plan ?? null, windows };
 }
 
 let cursorAt = 0;
