@@ -112,7 +112,20 @@ export default async function plugin(bb: BbPluginApi) {
    * answering rejects here, so the work waiting on it always ends and clears its in-flight flag.
    */
   function callHost(method: Parameters<typeof host.call>[0], input: Parameters<typeof host.call>[1], opts: { hostId: string; timeoutMs: number }): Promise<any> {
-    return withDeadline(host.call(method, input, opts), opts.timeoutMs + 5_000, labelOf(opts.hostId));
+    const label = labelOf(opts.hostId);
+    const started = Date.now();
+    const work = host.call(method, input, opts).then(
+      (value) => {
+        const took = Date.now() - started;
+        if (took > 10_000) bb.log.info(`${method} on ${label} took ${Math.round(took / 1000)} s`);
+        return value;
+      },
+      (error: unknown) => {
+        bb.log.warn(`${method} on ${label} failed after ${Math.round((Date.now() - started) / 1000)} s: ${error instanceof Error ? error.message : String(error)}`);
+        throw error;
+      },
+    );
+    return withDeadline(work, opts.timeoutMs + 5_000, label);
   }
 
   function probeHost(hostId: string, force = false): Promise<Probe | null> {
@@ -242,6 +255,7 @@ export default async function plugin(bb: BbPluginApi) {
   function refresh(hostId: string): Promise<void> {
     const c = cache(hostId);
     if (c.refreshing !== null) return c.refreshing;
+    bb.log.info(`refresh of ${labelOf(hostId)} started`);
     c.refreshing = (async () => {
       const probe = await probeHost(hostId);
       if (probe === null || probe.bin === null) return;
@@ -256,6 +270,7 @@ export default async function plugin(bb: BbPluginApi) {
       })
       .finally(() => {
         c.refreshing = null;
+        bb.log.info(`refresh of ${labelOf(hostId)} finished`);
         bb.realtime.publish("changed", { hostId });
       });
     return c.refreshing;
