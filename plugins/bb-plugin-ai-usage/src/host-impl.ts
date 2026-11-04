@@ -216,13 +216,88 @@ export interface InstallRequest {
 }
 
 /**
+ * The arguments that run the release's install.ps1. The script is a file, so nothing
+ * secret is on the command line: the team key and relay go in the environment
+ * (see windowsInstallEnv).
+ */
+export function windowsInstallArgs(file: string): string[] {
+  return ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", file];
+}
+
+/**
+ * The environment of the Windows install. install.ps1 reads AI_USAGE_TEAM_KEY and
+ * AI_USAGE_RELAY itself and joins the team on its first run. The key is never an argument.
+ */
+export function windowsInstallEnv(m: Machine, req: InstallRequest, tag: string): Env {
+  const env: Env = {
+    ...childEnv(m, null),
+    AI_USAGE_DOWNLOAD_URL: `https://github.com/${REPO}/releases/download/${tag}`,
+    ...req.extraEnv,
+  };
+  if (req.teamKey !== null && req.teamKey.trim() !== "") env.AI_USAGE_TEAM_KEY = req.teamKey.trim();
+  if (req.relay !== null && req.relay.trim() !== "") env.AI_USAGE_RELAY = req.relay.trim();
+  return env;
+}
+
+/** The installed binary: install.ps1 puts it in %LOCALAPPDATA%\Programs\ai-usage. */
+export function windowsBinary(env: Env): string {
+  return path.join(env.LOCALAPPDATA ?? path.join(env.USERPROFILE ?? "", "AppData", "Local"), "Programs", "ai-usage", "ai-usage.exe");
+}
+
+/** Windows: the release's install.ps1, then one collect and the scheduled task checked (registered when missing). */
+async function installWindows(m: Machine, req: InstallRequest): Promise<InstallOutput> {
+  const tag = await latestTag(m);
+  req.onLine(`installing ai-usage ${tag}`);
+  const script = await m.fetch(`https://raw.githubusercontent.com/${REPO}/${tag}/install.ps1`);
+  if (!script.ok) throw new Error(`could not download install.ps1 of ${tag} (HTTP ${script.status})`);
+  const file = path.join(m.tempDir, `install-${tag}.ps1`);
+  await writeFile(file, await script.text(), { mode: 0o600 });
+  const env = windowsInstallEnv(m, req, tag);
+  const tail: string[] = [];
+  const say = (raw: string) => {
+    // eslint-disable-next-line no-control-regex
+    const line = redact(raw.replace(/\x1b\[[0-9;]*[A-Za-z]/g, ""));
+    tail.push(line);
+    if (tail.length > 20) tail.shift();
+    req.onLine(line);
+  };
+  const r = await run("powershell", windowsInstallArgs(file), {
+    env,
+    cwd: m.tempDir,
+    stdin: null,
+    timeoutMs: 29 * 60 * 1000,
+    signal: req.signal,
+    onLine: (raw) => say(raw),
+  });
+  const exe = windowsBinary(env);
+  let problem: string | null = null;
+  if (r.code !== 0 || r.timedOut) {
+    problem = r.timedOut ? "the installer did not finish in 29 minutes" : errorMessage(r.stderr.replace(/^ai-usage install: /gm, "ai-usage: "), "") || (tail.at(-1) ?? "the installer failed");
+  } else {
+    const collected = await run(exe, ["collect", "--quiet"], { env, cwd: m.tempDir, stdin: null, timeoutMs: 10 * 60 * 1000, signal: req.signal, onLine: (raw) => say(raw) });
+    if (collected.code !== 0 || collected.timedOut) problem = `the first collect failed: ${redact(collected.stderr.trim() || "ai-usage collect failed")}`;
+    else {
+      const status = await run(exe, ["schedule", "status"], { env, cwd: m.tempDir, stdin: null, timeoutMs: 60_000, signal: req.signal });
+      if (status.code !== 0 || !/^registered:/m.test(status.stdout)) {
+        const added = await run(exe, ["schedule", "install"], { env, cwd: m.tempDir, stdin: null, timeoutMs: 60_000, signal: req.signal });
+        if (added.code !== 0) problem = `the scheduled task could not be registered: ${redact(added.stderr.trim() || "ai-usage schedule install failed")}`;
+      }
+    }
+  }
+  const ok = problem === null;
+  const message = problem ?? `installed ai-usage ${tag}`;
+  return { ok, code: r.code, tag, message: redact(message) };
+}
+
+/**
  * Runs the release's own install.sh, from the latest release's tag, so the
  * binary and the script come from the same release. The menu bar app stays
  * out (the panel offers it later) and so do shell profiles.
  */
 export async function install(m: Machine, req: InstallRequest): Promise<InstallOutput> {
+  if (m.platform === "win32") return installWindows(m, req);
   if (m.platform !== "darwin" && m.platform !== "linux") {
-    return { ok: false, code: null, tag: null, message: "ai-usage installs from BB on macOS and Linux only" };
+    return { ok: false, code: null, tag: null, message: "ai-usage installs from BB on macOS, Linux and Windows only" };
   }
   const tag = await latestTag(m);
   req.onLine(`installing ai-usage ${tag}`);

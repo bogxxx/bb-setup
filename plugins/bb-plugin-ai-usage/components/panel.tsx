@@ -125,7 +125,7 @@ function Body({ state, now, answer }: { state: AiUsageState; now: number; answer
     case "unsupported":
       return (
         <Quiet>
-          ai-usage installs from BB on macOS and Linux. On Windows, install it in PowerShell as the ai-usage README says, then open this page again.
+          This machine cannot run ai-usage from BB yet. Install it in PowerShell as the ai-usage README says, then open this page again.
         </Quiet>
       );
     case "absent":
