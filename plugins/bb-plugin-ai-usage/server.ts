@@ -135,6 +135,7 @@ export default async function plugin(bb: BbPluginApi) {
     c.probing = callHost("probe", {}, { hostId, timeoutMs: TIMEOUT.probe })
       .then((p: Probe) => {
         c.probe = p;
+        bb.log.info(`probe of ${labelOf(hostId)} answered: bin ${p.bin === null ? "none" : "found"}, platform ${p.platform}`);
         c.probedAt = Date.now();
         c.probeError = null;
         return p;
@@ -259,7 +260,10 @@ export default async function plugin(bb: BbPluginApi) {
     bb.log.info(`refresh of ${labelOf(hostId)} started`);
     c.refreshing = (async () => {
       const probe = await probeHost(hostId);
-      if (probe === null || probe.bin === null) return;
+      if (probe === null || probe.bin === null) {
+        bb.log.warn(`no probe of ${labelOf(hostId)} to run the report with: ${c.probeError ?? (probe === null ? "empty answer" : "ai-usage not installed")}`);
+        return;
+      }
       take(hostId, await run(hostId, probe, ["report", "--json"], TIMEOUT.report, { json: true }));
       await attachMachines(hostId);
     })()
