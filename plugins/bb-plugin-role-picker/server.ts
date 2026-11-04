@@ -55,20 +55,23 @@ type SpawnSpec = {
 const REVIEWERS: Record<string, SpawnSpec> = {
   gemini: { providerId: "acp-antigravity", model: "gemini-4-argon", reasoningLevel: "medium" },
   "copilot-opus": { providerId: "acp-github-copilot-cli", model: "claude-opus-5.5", reasoningLevel: "medium", sessionOptions: { agent: "reviewer" } },
-  "copilot-gpt": { providerId: "acp-github-copilot-cli", model: "gpt-6.1-terra", reasoningLevel: "medium", sessionOptions: { agent: "reviewer" } },
+  "copilot-sol": { providerId: "acp-github-copilot-cli", model: "gpt-6.1-sol", reasoningLevel: "medium", sessionOptions: { agent: "reviewer" } },
   "claude-opus": { providerId: "claude-code", model: "claude-opus-5-5", reasoningLevel: "medium" },
-  codex: { providerId: "codex", model: "gpt-6-luna", reasoningLevel: "medium" },
+  codex: { providerId: "codex", model: "gpt-6.1-sol", reasoningLevel: "medium" },
+  // cantrip-review: its model and instructions come from the agent file.
+  cursor: { providerId: "acp-cursor", agent: { dir: ".cursor", name: "cantrip-review.md" } },
 };
 
 // The reviewer chain for a worker on a provider, tried in order when one runs out of quota.
 // No entry runs on the worker's provider and no two entries share a provider.
-// A Claude worker is never reviewed by a Claude model (Opus or Haiku).
+// A Claude worker is never reviewed by a Claude model (Opus or Haiku). Everyone else gets
+// Opus 5.5 second, unless it is already first.
 const REVIEW_ORDER: Record<string, string[]> = {
-  "claude-code": ["gemini", "codex", "copilot-gpt"],
+  "claude-code": ["gemini", "copilot-sol", "cursor"],
   "acp-github-copilot-cli": ["claude-opus", "gemini", "codex"],
-  "acp-cursor": ["gemini", "claude-opus", "codex"],
+  "acp-cursor": ["gemini", "claude-opus", "copilot-sol"],
   "acp-antigravity": ["copilot-opus", "codex", "claude-opus"],
-  codex: ["gemini", "claude-opus", "copilot-gpt"],
+  codex: ["gemini", "claude-opus", "copilot-sol"],
 };
 
 function reviewChain(parentProviderId: string): string[] {
@@ -410,7 +413,12 @@ export default async function plugin(bb: BbPluginApi) {
       const spec = REVIEWERS[record.chain[index]];
       const providerId = spec.providerId;
       if (!(await providerAvailable(providerId))) continue;
-      const prompt = ["Assignment:\n" + record.body, reviewerProtocol(record.worker, replaces)].join("\n\n");
+      const defined = spec.agent ? agentDefinition(spec.agent, (message) => bb.log.warn(message)) : undefined;
+      const model = defined?.model ?? spec.model;
+      const reasoningLevel = defined?.reasoningLevel ?? spec.reasoningLevel;
+      const prompt = [defined?.body, "Assignment:\n" + record.body, reviewerProtocol(record.worker, replaces)]
+        .filter((part): part is string => Boolean(part))
+        .join("\n\n");
       try {
         const child = await bb.sdk.threads.spawn({
           projectId: record.projectId,
@@ -422,8 +430,9 @@ export default async function plugin(bb: BbPluginApi) {
           ...(record.environmentId
             ? { environment: { type: "reuse" as const, environmentId: record.environmentId } }
             : { environment: { type: "project-default" as const } }),
-          ...(spec.model ? { model: spec.model } : {}),
-          ...(spec.reasoningLevel ? { reasoningLevel: spec.reasoningLevel } : {}),
+          ...(model ? { model } : {}),
+          ...(reasoningLevel ? { reasoningLevel } : {}),
+          ...(defined?.serviceTier ? { serviceTier: defined.serviceTier } : {}),
           ...(spec.sessionOptions ? { sessionOptions: spec.sessionOptions } : {}),
           pluginMetadata: { role: "regular" },
           prompt,
