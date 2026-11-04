@@ -42,6 +42,16 @@ LINKS=(
   "$CLAUDE_DIR/agents|$REPO/claude/agents"
   "$BB_DIR/AGENTS.md|$REPO/bb/AGENTS.md"
   "$CLAUDE_DIR/CLAUDE.md|$REPO/claude/CLAUDE.md"
+  "$HOME/.copilot/agents/orchestrator.agent.md|$REPO/copilot/agents/orchestrator.agent.md"
+  "$HOME/.copilot/agents/explorer.agent.md|$REPO/copilot/agents/explorer.agent.md"
+  "$HOME/.copilot/agents/planner.agent.md|$REPO/copilot/agents/planner.agent.md"
+  "$HOME/.copilot/agents/worker.agent.md|$REPO/copilot/agents/worker.agent.md"
+  "$HOME/.copilot/agents/reviewer.agent.md|$REPO/copilot/agents/reviewer.agent.md"
+  "$HOME/.cursor/agents/cantrip-goal.md|$REPO/cursor/agents/cantrip-goal.md"
+  "$HOME/.cursor/agents/cantrip-explore.md|$REPO/cursor/agents/cantrip-explore.md"
+  "$HOME/.cursor/agents/cantrip-plan.md|$REPO/cursor/agents/cantrip-plan.md"
+  "$HOME/.cursor/agents/cantrip-implement.md|$REPO/cursor/agents/cantrip-implement.md"
+  "$HOME/.cursor/agents/cantrip-review.md|$REPO/cursor/agents/cantrip-review.md"
 )
 
 # `bb` on PATH can fail silently when the CLI lost its executable bit; fall back to node.
@@ -63,8 +73,9 @@ ensure_link() {
   if [ -L "$live" ] && [ "$(readlink "$live")" = "$target" ]; then return; fi
   if [ -e "$live" ] || [ -L "$live" ]; then
     # Keep local edits: a regular file that is newer than the repo copy wins.
-    if [ -f "$live" ] && [ ! -L "$live" ] && [ -f "$target" ] && ! cmp -s "$live" "$target" && [ "$live" -nt "$target" ]; then
-      cp "$live" "$target"; echo "  copied $live -> $target"
+    # A file the repo does not track yet is seeded from the live copy before it is linked.
+    if [ -f "$live" ] && [ ! -L "$live" ] && { [ ! -e "$target" ] || { ! cmp -s "$live" "$target" && [ "$live" -nt "$target" ]; }; }; then
+      mkdir -p "$(dirname "$target")"; cp "$live" "$target"; echo "  copied $live -> $target"
     fi
     local bak="$live.bak-$(date +%Y%m%d%H%M%S)"
     mv "$live" "$bak"; echo "  moved existing $live to $bak"

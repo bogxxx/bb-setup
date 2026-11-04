@@ -16,7 +16,17 @@ $LinkedDirs = @(
 $CopiedFiles = @(
   @{ Live = "$BbDir\AGENTS.md";            Repo = "$Repo\bb\AGENTS.md" },
   @{ Live = "$BbDir\bin\copilot-acp.cmd";  Repo = "$Repo\bb\bin\copilot-acp.cmd" },
-  @{ Live = "$ClaudeDir\CLAUDE.md";        Repo = "$Repo\claude\CLAUDE.md" }
+  @{ Live = "$ClaudeDir\CLAUDE.md";        Repo = "$Repo\claude\CLAUDE.md" },
+  @{ Live = "$HOME\.copilot\agents\orchestrator.agent.md"; Repo = "$Repo\copilot\agents\orchestrator.agent.md" },
+  @{ Live = "$HOME\.copilot\agents\explorer.agent.md";     Repo = "$Repo\copilot\agents\explorer.agent.md" },
+  @{ Live = "$HOME\.copilot\agents\planner.agent.md";      Repo = "$Repo\copilot\agents\planner.agent.md" },
+  @{ Live = "$HOME\.copilot\agents\worker.agent.md";       Repo = "$Repo\copilot\agents\worker.agent.md" },
+  @{ Live = "$HOME\.copilot\agents\reviewer.agent.md";     Repo = "$Repo\copilot\agents\reviewer.agent.md" },
+  @{ Live = "$HOME\.cursor\agents\cantrip-goal.md";        Repo = "$Repo\cursor\agents\cantrip-goal.md" },
+  @{ Live = "$HOME\.cursor\agents\cantrip-explore.md";     Repo = "$Repo\cursor\agents\cantrip-explore.md" },
+  @{ Live = "$HOME\.cursor\agents\cantrip-plan.md";        Repo = "$Repo\cursor\agents\cantrip-plan.md" },
+  @{ Live = "$HOME\.cursor\agents\cantrip-implement.md";   Repo = "$Repo\cursor\agents\cantrip-implement.md" },
+  @{ Live = "$HOME\.cursor\agents\cantrip-review.md";      Repo = "$Repo\cursor\agents\cantrip-review.md" }
 )
 
 function Sync-File($live, $repo) {
