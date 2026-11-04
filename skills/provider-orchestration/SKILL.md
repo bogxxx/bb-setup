@@ -65,4 +65,4 @@ Do not pass `--option agent=reviewer` on this spawn. That agent is Opus 5.5. The
 
 ## Any other provider
 
-Explore, plan, and implement with models from that provider's live catalog. Send the review to the Copilot reviewer persona: provider `acp-github-copilot-cli`, model `claude-opus-5.5`, reasoning level `medium`, `--option agent=reviewer`. Do not invent a model id.
+Explore, plan, and implement with models from that provider's live catalog. Send the review to the Antigravity Argon reviewer persona: provider `acp-antigravity`, model `gemini-4-argon`, reasoning level `medium`, `--option agent=reviewer`. Do not invent a model id.
