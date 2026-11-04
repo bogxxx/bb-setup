@@ -2,6 +2,7 @@
 // login lives. Codex is the ChatGPT rate-limit endpoint. Copilot is the
 // GitHub account stored by the Copilot app, not the gh CLI.
 import { spawnSync } from "node:child_process";
+import { EXTRAS_BUDGET_MS, startBudget, stepLimit } from "./budget.js";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -66,9 +67,11 @@ async function codex(): Promise<MeasuredProvider | null> {
   const account = auth.tokens?.account_id;
   if (!token || !account) return null;
   // A stalled connection would hold the machine's answer forever, so the request has a limit.
+  const limit = stepLimit(20_000);
+  if (limit === null) return null;
   const response = await fetch("https://chatgpt.com/backend-api/wham/usage", {
     headers: { Authorization: `Bearer ${token}`, "ChatGPT-Account-Id": account, "User-Agent": "codex-cli" },
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(limit),
   });
   if (!response.ok) return null;
   const body = (await response.json()) as {
@@ -89,8 +92,43 @@ async function codex(): Promise<MeasuredProvider | null> {
   return { provider: "codex", name, plan: body.plan_type ?? null, windows };
 }
 
+/** The Copilot reader for this system: the Windows credential store, or the gh CLI's login on macOS and Linux. */
+export function copilotReader(platform: NodeJS.Platform = process.platform): "windows" | "gh" {
+  return platform === "win32" ? "windows" : "gh";
+}
+
 function copilot(): MeasuredProvider | null {
-  if (process.platform !== "win32") return null;
+  return copilotReader() === "windows" ? copilotWindows() : copilotGh();
+}
+
+/** The gh jq filter: the plan, the login, and each quota window the account has, in the reader's shape. */
+export const GH_COPILOT_JQ =
+  '. as $b | {plan: .copilot_plan, login: .login, windows: [(.quota_snapshots // {}) | to_entries[] | select(.value.unlimited != true and .value.has_quota == true and ((.value.entitlement // 0) > 0) and (.value.percent_remaining | type) == "number") | {name: .key, percentUsed: (100 - .value.percent_remaining), resetsAt: $b.quota_reset_date_utc}]}';
+
+/** Copilot on macOS and Linux: gh asks the same endpoint with its login. */
+function copilotGh(): MeasuredProvider | null {
+  const limit = stepLimit(20_000);
+  if (limit === null) return null;
+  const run = spawnSync("gh", ["api", "copilot_internal/user", "--jq", GH_COPILOT_JQ], { encoding: "utf8", timeout: limit, windowsHide: true });
+  if (run.error || run.status !== 0 || !run.stdout.trim()) return null;
+  return copilotFromReading(run.stdout);
+}
+
+/** A Copilot reading as the filter prints it, or null when it has no login or no window. */
+export function copilotFromReading(text: string): MeasuredProvider | null {
+  let parsed: { plan?: string | null; login?: unknown; windows?: MeasuredWindow[] };
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const login = typeof parsed.login === "string" ? parsed.login.trim() : "";
+  const windows = (parsed.windows ?? []).filter((w) => Number.isFinite(w.percentUsed));
+  if (login === "" || windows.length === 0) return null;
+  return { provider: "copilot", name: login, plan: parsed.plan ?? null, windows };
+}
+
+function copilotWindows(): MeasuredProvider | null {
   const script = `
 import ctypes, ctypes.wintypes, json, sqlite3, os, urllib.request
 class CREDENTIAL(ctypes.Structure):
@@ -144,9 +182,11 @@ for name, snap in snaps.items():
     windows.append({"name": name, "percentUsed": used, "resetsAt": body.get("quota_reset_date_utc")})
 print(json.dumps({"plan": body.get("copilot_plan"), "login": body.get("login"), "windows": windows}))
 `;
+  const limit = stepLimit(25_000);
+  if (limit === null) return null;
   let result: { status: number | null; stdout: string } | null = null;
   for (const bin of ["python", "py", "python3"]) {
-    const run = spawnSync(bin, ["-c", script], { encoding: "utf8", timeout: 25_000, windowsHide: true });
+    const run = spawnSync(bin, ["-c", script], { encoding: "utf8", timeout: limit, windowsHide: true });
     if (run.error) continue;
     result = run;
     break;
@@ -332,7 +372,18 @@ export function otherLogins(have: MeasuredProvider[]): MeasuredProvider[] {
   return out;
 }
 
-export async function measureUsage(): Promise<MeasuredUsage> {
+let queue: Promise<unknown> = Promise.resolve();
+
+/** Everything this machine can report about its logins. Settles within `budgetMs`; a step that cannot start in time is skipped. */
+export function measureUsage(budgetMs = EXTRAS_BUDGET_MS): Promise<MeasuredUsage> {
+  // Calls run one at a time: the budget is shared state.
+  const next = queue.then(() => measureNow(budgetMs));
+  queue = next.catch(() => undefined);
+  return next;
+}
+
+async function measureNow(budgetMs: number): Promise<MeasuredUsage> {
+  startBudget(budgetMs);
   const providers: MeasuredProvider[] = [];
   const push = (item: MeasuredProvider | null) => {
     if (item !== null) providers.push(item);

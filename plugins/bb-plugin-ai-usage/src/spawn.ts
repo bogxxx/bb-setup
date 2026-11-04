@@ -25,14 +25,26 @@ const MAX_STDERR = 256 * 1024;
 /** After a kill, how long to wait for the pipes to close before answering anyway. */
 export const GIVE_UP_MS = 8000;
 
-/** Stops the child and, on Windows, everything it started (taskkill /T), so nothing keeps the pipes open. */
-function killTree(child: ReturnType<typeof spawn>): void {
-  if (process.platform === "win32" && child.pid !== undefined) {
+/**
+ * Stops the child and everything it started. Windows: taskkill /T takes the tree. macOS and Linux:
+ * the child leads its own process group (see `detached`), so a signal to the group reaches its
+ * grandchildren too; the child alone is signalled when it has no pid.
+ */
+function killTree(child: ReturnType<typeof spawn>, signal: "SIGTERM" | "SIGKILL" = "SIGTERM"): void {
+  if (child.pid === undefined) {
+    child.kill(signal);
+    return;
+  }
+  if (process.platform === "win32") {
     const kill = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
     kill.on("error", () => child.kill());
     return;
   }
-  child.kill("SIGTERM");
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    child.kill(signal);
+  }
 }
 
 export function run(command: string, args: string[], options: SpawnOptions): Promise<Spawned> {
@@ -42,6 +54,8 @@ export function run(command: string, args: string[], options: SpawnOptions): Pro
       child = spawn(command, args, {
         env: options.env,
         cwd: options.cwd,
+        // Own process group on macOS and Linux, so a kill reaches everything the child started.
+        detached: process.platform !== "win32",
         stdio: [options.stdin == null ? "ignore" : "pipe", "pipe", "pipe"],
       });
     } catch (error) {
@@ -76,7 +90,7 @@ export function run(command: string, args: string[], options: SpawnOptions): Pro
     const stop = () => {
       if (done) return;
       killTree(child);
-      killer = setTimeout(() => child.kill("SIGKILL"), 5000);
+      killer = setTimeout(() => killTree(child, "SIGKILL"), 5000);
       // A grandchild that inherited the pipes keeps 'close' from firing, so answer after a grace period anyway.
       giveUp = setTimeout(() => finish(null), GIVE_UP_MS);
     };

@@ -233,8 +233,9 @@ export default async function plugin(bb: BbPluginApi) {
     for (const machine of persistent) {
       const reading = live.find((x) => x.id === machine.id)?.measured ?? null;
       const snap = reading === null ? await bb.storage.kv.get<Snapshot>(`snapshot:${machine.id}`) : undefined;
-      if (reading !== null) mergeMeasured(next, { ...reading, hostName: machine.name });
-      else if (snap !== undefined) mergeMeasured(next, { ...snap, hostName: machine.name }, { measuredAt: snap.at });
+      // A reading matches this machine by its BB name or the OS hostname it reports under, never by OS user.
+      if (reading !== null) mergeMeasured(next, { ...reading, hostName: machine.name }, { aliases: [reading.hostName] });
+      else if (snap !== undefined) mergeMeasured(next, { ...snap, hostName: machine.name }, { measuredAt: snap.at, aliases: snap.alias ? [snap.alias] : [] });
       // The row does not depend on extras: its OS user comes from the live reading, the snapshot, or the probe.
       let user = reading?.user ?? snap?.user ?? "";
       if (user === "" && machine.status === "connected") user = cache(machine.id).probe?.user ?? (await probeHost(machine.id))?.user ?? "";

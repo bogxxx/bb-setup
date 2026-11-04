@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { stepLimit } from "./budget.js";
 import type { MatrixCell, Report, Share, TeamAccount, Usage, Window } from "./report.js";
 
 const require = createRequire(import.meta.url);
@@ -72,26 +73,6 @@ function card(name: string, device: string, windows: Window[], extra: Partial<Te
   };
 }
 
-function copilot(device: string): TeamAccount | null {
-  const gh = spawnSync(
-    "gh",
-    ["api", "/copilot_internal/user", "--jq", "{plan:.copilot_plan,reset:.quota_reset_date_utc,premium:.quota_snapshots.premium_interactions}"],
-    { encoding: "utf8", timeout: 20_000, windowsHide: true },
-  );
-  if (gh.status !== 0 || !gh.stdout.trim()) return null;
-  let parsed: { plan?: string; reset?: string; premium?: { credits_used?: number; entitlement?: number; unlimited?: boolean } };
-  try {
-    parsed = JSON.parse(gh.stdout);
-  } catch {
-    return null;
-  }
-  const premium = parsed.premium;
-  if (premium == null) return null;
-  const entitlement = num(premium.entitlement);
-  const used = entitlement > 0 ? (num(premium.credits_used) / entitlement) * 100 : 0;
-  return card("premium", device, [meter("premium", used, parsed.reset ?? null, true)], { plan: parsed.plan ?? null });
-}
-
 let cursorAt = 0;
 let cursorCache: TeamAccount | null = null;
 
@@ -111,6 +92,8 @@ function cursorAuthFile(): string | null {
 }
 
 function cursorApi(token: string, method: string): Record<string, unknown> | null {
+  const limit = stepLimit(20_000);
+  if (limit === null) return null;
   const res = spawnSync(
     curlBin(),
     [
@@ -127,7 +110,7 @@ function cursorApi(token: string, method: string): Record<string, unknown> | nul
       "-d",
       "{}",
     ],
-    { encoding: "utf8", timeout: 20_000, windowsHide: true },
+    { encoding: "utf8", timeout: limit, windowsHide: true },
   );
   if (res.status !== 0 || !res.stdout.trim() || res.stdout.includes("unauthenticated")) return null;
   try {
@@ -289,9 +272,11 @@ data = json.loads(blob.decode("utf-8"))
 token = data.get("token") or {}
 print(json.dumps({"email": data.get("id_token_email"), "access": token.get("access_token"), "expiry": token.get("expiry")}))
 `;
+  const limit = stepLimit(15_000);
+  if (limit === null) return null;
   let result: { status: number | null; stdout: string } | null = null;
   for (const bin of ["python", "py", "python3"]) {
-    const run = spawnSync(bin, ["-c", script], { encoding: "utf8", timeout: 15_000, windowsHide: true });
+    const run = spawnSync(bin, ["-c", script], { encoding: "utf8", timeout: limit, windowsHide: true });
     if (run.error) continue;
     result = run;
     break;
@@ -369,9 +354,11 @@ function antigravityRefresh(): string | null {
     refresh_token: refresh,
     grant_type: "refresh_token",
   });
+  const limit = stepLimit(20_000);
+  if (limit === null) return null;
   const res = spawnSync("curl", ["-sS", "-X", "POST", "https://oauth2.googleapis.com/token", "-d", body.toString()], {
     encoding: "utf8",
-    timeout: 20_000,
+    timeout: limit,
     windowsHide: true,
   });
   if (res.status !== 0 || !res.stdout.trim()) return null;
@@ -384,10 +371,12 @@ function antigravityRefresh(): string | null {
 }
 
 function postJson(url: string, token: string): unknown {
+  const limit = stepLimit(20_000);
+  if (limit === null) return null;
   const res = spawnSync(
     "curl",
     ["-sS", "-X", "POST", url, "-H", `Authorization: Bearer ${token}`, "-H", "Content-Type: application/json", "-H", "User-Agent: antigravity", "-d", "{}"],
-    { encoding: "utf8", timeout: 20_000, windowsHide: true },
+    { encoding: "utf8", timeout: limit, windowsHide: true },
   );
   if (res.status !== 0 || !res.stdout.trim()) return null;
   try {
@@ -667,23 +656,35 @@ export function quotaLogins(): HostLogin[] {
   return out;
 }
 
+/** The host part of a device name such as user@host, lower-cased. */
+function hostOf(name: string): string {
+  const label = name.toLowerCase();
+  const at = label.lastIndexOf("@");
+  return at === -1 ? label : label.slice(at + 1);
+}
+
 /**
  * A machine that does not run the collector still contributes the logins that live on it.
- * With `measuredAt`, the reading is an earlier one kept for a machine that is offline or
- * whose live reading failed: its device says when it was last seen, and is marked old.
+ *
+ * A reading is matched to a device by host name only (its BB name, or a name the machine reports
+ * under, given as `aliases`). Never by OS user: several machines often share one.
+ *
+ * With `measuredAt`, the reading is an earlier one kept for a machine that is offline or whose live
+ * reading failed. Its device says when it was last seen, and its logins are marked stale with that
+ * time. Anything read at or after `measuredAt` is kept as it is.
  */
 export function mergeMeasured(
   report: Report,
   measured: { hostName: string; user: string; providers: { provider: string; name: string; plan: string | null; windows: { name: string; percentUsed: number; resetsAt: string | null }[] }[] },
-  options: { measuredAt?: number } = {},
+  options: { measuredAt?: number; aliases?: string[] } = {},
 ): void {
   const deviceName = measured.hostName;
   const stale = options.measuredAt !== undefined && Number.isFinite(options.measuredAt);
-  const seenAt = stale ? new Date(options.measuredAt!).toISOString() : null;
-  const ageSeconds = stale ? Math.max(0, Math.round((Date.now() - options.measuredAt!) / 1000)) : 0;
-  const known = report.team.devices.find(
-    (d) => d.name.toLowerCase().includes(deviceName.toLowerCase()) || d.os_user.toLowerCase() === measured.user.toLowerCase() || d.name.toLowerCase().includes(measured.user.toLowerCase()),
-  );
+  const at = stale ? options.measuredAt! : 0;
+  const seenAt = stale ? new Date(at).toISOString() : null;
+  const ageSeconds = stale ? Math.max(0, Math.round((Date.now() - at) / 1000)) : 0;
+  const names = new Set([deviceName, ...(options.aliases ?? [])].map((name) => name.toLowerCase()).filter((name) => name !== ""));
+  const known = report.team.devices.find((d) => names.has(hostOf(d.name)) || names.has((d.label ?? "").toLowerCase()));
   if (known === undefined) {
     report.team.devices.push({
       device: deviceName,
@@ -705,7 +706,7 @@ export function mergeMeasured(
   } else if (stale) {
     // The report's own device keeps its newer reading; only one older than the snapshot is marked.
     const reported = Date.parse(known.collected_at ?? "");
-    if (!Number.isFinite(reported) || reported < options.measuredAt!) {
+    if (!Number.isFinite(reported) || reported < at) {
       known.old = true;
       known.collected_at = seenAt!;
       known.age_seconds = ageSeconds;
@@ -723,12 +724,17 @@ export function mergeMeasured(
       plan: provider.plan,
       no_reading: windows.length === 0 ? "Signed in. No limit reading yet." : null,
     });
-    const group = report.team.providers.find((p) => p.provider === provider.provider);
+    if (stale && account.quota !== null) {
+      account.quota.stale = true;
+      account.quota.age_seconds = ageSeconds;
+      account.quota.observed_at = seenAt!;
+    }
     const remember = () => {
       if (windows.length === 0) return;
       seatInMatrix(report, provider.provider, account.name, account.state);
       seatInCost(report, provider.provider, account.name, provider.plan);
     };
+    const group = report.team.providers.find((p) => p.provider === provider.provider);
     if (group === undefined) {
       report.team.providers.push({ provider: provider.provider, accounts: [account] });
       remember();
@@ -751,13 +757,15 @@ export function mergeMeasured(
       foldCost(report, provider.provider, provider.name, previous);
     }
     if (provider.name !== existing.name) foldCost(report, provider.provider, existing.name, provider.name);
+    // A stale reading never overwrites a quota read at or after it was taken.
+    const newer = stale && existing.quota !== null && Date.parse(existing.quota.observed_at) >= at;
     const unchanged = windows.length > 0 && sameQuota(provider.plan, windows, existing);
-    if (windows.length > 0 && !unchanged) {
+    if (windows.length > 0 && !unchanged && !newer) {
       existing.quota = account.quota;
       existing.plan = account.plan ?? existing.plan;
       existing.state = account.state;
     }
-    existing.devices = withDevice(existing.devices, shownOn);
+    if (!newer) existing.devices = withDevice(existing.devices, shownOn);
     group.accounts = group.accounts.filter((other) => {
       if (other === existing) return true;
       if (!sameQuota(provider.plan, windows, other)) return true;
