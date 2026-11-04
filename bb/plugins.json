@@ -1,79 +1,79 @@
-﻿{
-    "installed":  [
-                      {
-                          "id":  "agent-graph",
-                          "source":  "git:https://github.com/nathancolgate/bb-plugin-agent-graph.git@semver:^0.1.0",
-                          "enabled":  true
-                      },
-                      {
-                          "id":  "agent-traces",
-                          "source":  "git:https://github.com/charpeni/bb-plugins.git@semver:agent-traces/:^1.0.0",
-                          "enabled":  true
-                      },
-                      {
-                          "id":  "ai-usage",
-                          "source":  "npm:@goodit/bb-plugin-ai-usage@\u003e=0.12.0 \u003c1.0.0",
-                          "enabled":  true
-                      },
-                      {
-                          "id":  "burn",
-                          "source":  "path:C:\\Users\\krech\\src\\burn",
-                          "enabled":  true,
-                          "clone":  "https://github.com/kalindudc/burn.git",
-                          "path":  "~\\src\\burn"
-                      },
-                      {
-                          "id":  "claude-subagents",
-                          "source":  "repo:plugins/bb-plugin-claude-subagents",
-                          "enabled":  true
-                      },
-                      {
-                          "id":  "role-picker",
-                          "source":  "repo:plugins/bb-plugin-role-picker",
-                          "enabled":  true
-                      }
-                  ],
-    "builtinsEnabled":  {
-                            "account-pool":  true,
-                            "agent-annotations":  true,
-                            "ask-user-question":  true,
-                            "automations":  true,
-                            "bb-account":  true,
-                            "bb-ai":  true,
-                            "bb--composer":  true,
-                            "bb--connect-next":  false,
-                            "bb--git":  true,
-                            "bb--github-pr-status":  true,
-                            "bb-guide":  true,
-                            "bb--mcp":  false,
-                            "bb--prompt-library":  true,
-                            "bb--provider-usage":  true,
-                            "bb--storage-retention":  false,
-                            "browser-automation":  true,
-                            "concurrency-limit":  true,
-                            "connect":  true,
-                            "custom-instructions":  true,
-                            "drafts":  true,
-                            "environment-git-worktree":  true,
-                            "environment-personal-workspace":  true,
-                            "environment-project-checkout":  true,
-                            "inline-vis":  true,
-                            "keep-awake":  true,
-                            "monaco-editor":  true,
-                            "navigation":  true,
-                            "pdf-preview":  true,
-                            "plugin-api-docs":  true,
-                            "plugin-api-tester":  false,
-                            "provider-acp":  true,
-                            "provider-claude-code":  true,
-                            "provider-codex":  true,
-                            "provider-pi":  true,
-                            "provider-retry":  true,
-                            "push-notifications":  true,
-                            "scheduled-send":  true,
-                            "secrets":  true,
-                            "side-chat":  true,
-                            "thread-list":  true,
-                            "workflows":  true
-                        }
+{
+  "installed": [
+    {
+      "id": "agent-graph",
+      "source": "git:https://github.com/nathancolgate/bb-plugin-agent-graph.git@semver:^0.1.0",
+      "enabled": true
+    },
+    {
+      "id": "agent-traces",
+      "source": "git:https://github.com/charpeni/bb-plugins.git@semver:agent-traces/:^1.0.0",
+      "enabled": true
+    },
+    {
+      "id": "ai-usage",
+      "source": "npm:@goodit/bb-plugin-ai-usage@>=0.12.0 <1.0.0",
+      "enabled": true
+    },
+    {
+      "id": "burn",
+      "source": "path:C:\\Users\\krech\\src\\burn",
+      "enabled": true,
+      "clone": "https://github.com/kalindudc/burn.git",
+      "path": "~\\src\\burn"
+    },
+    {
+      "id": "claude-subagents",
+      "source": "path:C:\\Users\\krech\\.bb\\dev-plugins\\bb-plugin-claude-subagents",
+      "enabled": true
+    },
+    {
+      "id": "role-picker",
+      "source": "repo:plugins/bb-plugin-role-picker",
+      "enabled": true
+    }
+  ],
+  "builtinsEnabled": {
+    "account-pool": true,
+    "agent-annotations": true,
+    "ask-user-question": true,
+    "automations": true,
+    "bb--composer": true,
+    "bb--connect-next": false,
+    "bb--git": true,
+    "bb--github-pr-status": true,
+    "bb--mcp": false,
+    "bb--prompt-library": true,
+    "bb--provider-usage": true,
+    "bb--storage-retention": false,
+    "bb-account": true,
+    "bb-ai": true,
+    "bb-guide": true,
+    "browser-automation": true,
+    "concurrency-limit": true,
+    "connect": true,
+    "custom-instructions": true,
+    "drafts": true,
+    "environment-git-worktree": true,
+    "environment-personal-workspace": true,
+    "environment-project-checkout": true,
+    "inline-vis": true,
+    "keep-awake": true,
+    "monaco-editor": true,
+    "navigation": true,
+    "pdf-preview": true,
+    "plugin-api-docs": true,
+    "plugin-api-tester": false,
+    "provider-acp": true,
+    "provider-claude-code": true,
+    "provider-codex": true,
+    "provider-pi": true,
+    "provider-retry": true,
+    "push-notifications": true,
+    "scheduled-send": true,
+    "secrets": true,
+    "side-chat": true,
+    "thread-list": true,
+    "workflows": true
+  }
 }

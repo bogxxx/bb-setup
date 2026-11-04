@@ -1,5 +1,8 @@
-﻿{
-    "provider-acp":  {
-                         "customAgents":  "[{\"id\":\"github-copilot-cli\",\"displayName\":\"GitHub Copilot\",\"command\":\"/usr/bin/env\",\"args\":[\"-u\",\"GH_TOKEN\",\"-u\",\"GITHUB_TOKEN\",\"-u\",\"COPILOT_GITHUB_TOKEN\",\"/opt/homebrew/bin/copilot\",\"--acp\"],\"env\":{}},{\"id\":\"antigravity\",\"displayName\":\"Gravity\",\"command\":\"agy\",\"args\":[\"acp\"],\"env\":{}}]"
-                     }
+{
+  "provider-acp": {
+    "customAgents": "[{\"id\":\"github-copilot-cli\",\"displayName\":\"GitHub Copilot\",\"command\":\"/usr/bin/env\",\"args\":[\"-u\",\"GH_TOKEN\",\"-u\",\"GITHUB_TOKEN\",\"-u\",\"COPILOT_GITHUB_TOKEN\",\"/opt/homebrew/bin/copilot\",\"--acp\"],\"env\":{}},{\"id\":\"antigravity\",\"displayName\":\"Gravity\",\"command\":\"agy\",\"args\":[\"acp\"],\"env\":{}}]"
+  },
+  "push-notifications": {
+    "childLevel": "muted"
+  }
 }
