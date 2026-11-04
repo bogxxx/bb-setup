@@ -1,44 +1,7 @@
 #!/usr/bin/env bash
-# bb's GitHub Copilot ACP launcher (macOS). bb's provider-acp customAgents entry
-# runs this with modelCli.selectFlag "--model", so bb starts Copilot on the
-# thread's model instead of switching models in the session. A switch resets
-# Copilot to the model's default 200k context window; launching keeps the tier.
-#
-#   copilot-acp --list-models          model list for bb's picker
-#   copilot-acp --model <id>[-effort]  start Copilot ACP on that model and effort
-#
-# COPILOT_CONTEXT_TIER picks the window: long_context (default, about 1M where
-# the model supports it) or default (the model's standard window).
-set -euo pipefail
-
+# macOS shim for bb's Copilot ACP launcher; the logic is in copilot-acp.mjs.
+# ~/.local/bin/copilot-acp links here, so bb's provider-acp setting can use the
+# bare command "copilot-acp" on every machine.
 DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-COPILOT="${COPILOT_BIN:-/opt/homebrew/bin/copilot}"
 NODE="$(command -v node || echo /opt/homebrew/bin/node)"
-
-if [ "${1:-}" = "--list-models" ]; then
-  exec "$NODE" "$DIR/copilot-list-models.mjs" "${@:2}"
-fi
-
-args=()
-has_context=0
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --model)
-      model="${2:-}"
-      shift 2 || shift
-      effort=""
-      for token in none low medium high xhigh max; do
-        case "$model" in
-          *-"$token") effort="$token"; model="${model%-"$token"}"; break ;;
-        esac
-      done
-      args+=(--model "$model")
-      [ -n "$effort" ] && args+=(--reasoning-effort "$effort")
-      ;;
-    --context|--context=*) has_context=1; args+=("$1"); shift ;;
-    *) args+=("$1"); shift ;;
-  esac
-done
-[ "$has_context" = 1 ] || args+=(--context "${COPILOT_CONTEXT_TIER:-long_context}")
-
-exec env -u GH_TOKEN -u GITHUB_TOKEN -u COPILOT_GITHUB_TOKEN "$COPILOT" --acp ${args[@]+"${args[@]}"}
+exec "$NODE" "$DIR/copilot-acp.mjs" "$@"

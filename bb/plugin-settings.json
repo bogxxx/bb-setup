@@ -1,6 +1,6 @@
 {
   "provider-acp": {
-    "customAgents": "[{\"id\":\"github-copilot-cli\",\"displayName\":\"GitHub Copilot\",\"command\":\"/Users/bohdan.krechko/.bb/bin/copilot-acp\",\"args\":[],\"env\":{},\"modelCli\":{\"listArgs\":[\"--list-models\"],\"selectFlag\":\"--model\",\"primaryModels\":[]}},{\"id\":\"github-copilot-cli-200k\",\"displayName\":\"GitHub Copilot (200k context)\",\"command\":\"/Users/bohdan.krechko/.bb/bin/copilot-acp\",\"args\":[],\"env\":{\"COPILOT_CONTEXT_TIER\":\"default\"},\"modelCli\":{\"listArgs\":[\"--list-models\"],\"selectFlag\":\"--model\",\"primaryModels\":[]}},{\"id\":\"antigravity\",\"displayName\":\"Gravity\",\"command\":\"agy\",\"args\":[\"acp\"],\"env\":{}}]"
+    "customAgents": "[{\"id\":\"github-copilot-cli\",\"displayName\":\"GitHub Copilot\",\"command\":\"copilot-acp\",\"args\":[],\"env\":{},\"modelCli\":{\"listArgs\":[\"--list-models\"],\"selectFlag\":\"--model\",\"primaryModels\":[]}},{\"id\":\"antigravity\",\"displayName\":\"Gravity\",\"command\":\"agy\",\"args\":[\"acp\"],\"env\":{}}]"
   },
   "push-notifications": {
     "childLevel": "muted"

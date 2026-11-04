@@ -37,12 +37,13 @@ done
 
 # Live path -> repo path. On macOS both folders and files are symlinked, so
 # editing either side changes the same file. copilot-acp.cmd is Windows-only.
+# ~/.local/bin is on the bb daemon's PATH, so the bare "copilot-acp" resolves there.
 LINKS=(
   "$BB_DIR/skills/provider-orchestration|$REPO/skills/provider-orchestration"
   "$CLAUDE_DIR/agents|$REPO/claude/agents"
   "$BB_DIR/AGENTS.md|$REPO/bb/AGENTS.md"
   "$CLAUDE_DIR/CLAUDE.md|$REPO/claude/CLAUDE.md"
-  "$BB_DIR/bin/copilot-acp|$REPO/bb/bin/copilot-acp"
+  "$HOME/.local/bin/copilot-acp|$REPO/bb/bin/copilot-acp"
   "$HOME/.copilot/agents/orchestrator.agent.md|$REPO/copilot/agents/orchestrator.agent.md"
   "$HOME/.copilot/agents/explorer.agent.md|$REPO/copilot/agents/explorer.agent.md"
   "$HOME/.copilot/agents/planner.agent.md|$REPO/copilot/agents/planner.agent.md"

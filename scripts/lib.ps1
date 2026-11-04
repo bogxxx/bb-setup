@@ -15,7 +15,7 @@ $LinkedDirs = @(
 # The newer copy wins in both directions.
 $CopiedFiles = @(
   @{ Live = "$BbDir\AGENTS.md";            Repo = "$Repo\bb\AGENTS.md" },
-  @{ Live = "$BbDir\bin\copilot-acp.cmd";  Repo = "$Repo\bb\bin\copilot-acp.cmd" },
+  @{ Live = "$HOME\.local\bin\copilot-acp.cmd"; Repo = "$Repo\bb\bin\copilot-acp.cmd" },
   @{ Live = "$ClaudeDir\CLAUDE.md";        Repo = "$Repo\claude\CLAUDE.md" },
   @{ Live = "$HOME\.copilot\agents\orchestrator.agent.md"; Repo = "$Repo\copilot\agents\orchestrator.agent.md" },
   @{ Live = "$HOME\.copilot\agents\explorer.agent.md";     Repo = "$Repo\copilot\agents\explorer.agent.md" },
