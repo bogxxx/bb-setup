@@ -168,6 +168,8 @@ export default async function plugin(bb: BbPluginApi) {
   interface Snapshot {
     at: number;
     name: string;
+    /** The machine's own OS hostname, which its ai-usage reports rows under. */
+    alias: string;
     user: string;
     providers: MeasuredUsage["providers"];
   }
@@ -189,7 +191,7 @@ export default async function plugin(bb: BbPluginApi) {
         .map(async (machine) => {
           try {
             const measured = await host.call("extras", {}, { hostId: machine.id, timeoutMs: 30_000 });
-            await bb.storage.kv.set(`snapshot:${machine.id}`, { at: Date.now(), name: machine.name, user: measured.user, providers: measured.providers } satisfies Snapshot);
+            await bb.storage.kv.set(`snapshot:${machine.id}`, { at: Date.now(), name: machine.name, alias: measured.hostName, user: measured.user, providers: measured.providers } satisfies Snapshot);
             return { id: machine.id, measured };
           } catch (error) {
             bb.log.warn(`extras on ${machine.name} failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -206,7 +208,7 @@ export default async function plugin(bb: BbPluginApi) {
       // The row does not depend on extras: its OS user comes from the live reading, the snapshot, or the probe.
       let user = reading?.user ?? snap?.user ?? "";
       if (user === "" && machine.status === "connected") user = cache(machine.id).probe?.user ?? (await probeHost(machine.id))?.user ?? "";
-      machineInMatrix(next, machine.name, user, machine.id);
+      machineInMatrix(next, machine.name, user, machine.id, [reading?.hostName ?? snap?.alias ?? ""]);
     }
     try {
       fillMatrixFromBurn(next, bb.server.experimental_dataDir, Date.now(), list.hosts.map((h) => ({ id: h.id, name: h.name })));

@@ -475,15 +475,16 @@ function withDevice(devices: string[], device: string): string[] {
  * A connected machine is a matrix row even when it has no token series.
  * A row already named for that host keeps its numbers and records this
  * machine's id. A new row uses the same empty cells as a seat with no
- * series, so the table shows the en dash.
+ * series, so the table shows the en dash. `aliases` are other names the machine's
+ * own ai-usage reports under (its OS hostname), so its row is not listed twice.
  */
-export function machineInMatrix(report: Report, hostName: string, user: string, deviceId: string): void {
-  const hostKey = hostName.toLowerCase();
+export function machineInMatrix(report: Report, hostName: string, user: string, deviceId: string, aliases: string[] = []): void {
+  const hostKeys = new Set([hostName, ...aliases].map((name) => name.toLowerCase()).filter((name) => name !== ""));
   const known = report.team.matrix.rows.find((row) => {
     const device = row.device.toLowerCase();
     const at = device.lastIndexOf("@");
     const hostPart = at === -1 ? device : device.slice(at + 1);
-    return hostPart === hostKey || row.device_id === deviceId;
+    return hostKeys.has(hostPart) || row.device_id === deviceId;
   });
   if (known !== undefined) {
     known.device_id = deviceId;
