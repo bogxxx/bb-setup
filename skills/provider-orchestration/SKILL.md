@@ -59,7 +59,9 @@ Do not replace a bracket pin with a picker slug. The BB Cursor catalog does not 
 
 Inside Cursor, review with `cantrip-review`.
 
-## GitHub Copilot (`acp-github-copilot-cli`)
+## GitHub Copilot (`acp-github-copilot-cli` and `acp-github-copilot-sopra`)
+
+There are two Copilot providers: `acp-github-copilot-cli` (the user's own account, launcher `copilot-acp`) and `acp-github-copilot-sopra` (the SopraSteria account, launcher `copilot-acp-sopra`). They share the launcher, agents, model ids, and rules below; only the gh login differs. A thread on one Copilot spawns its explorer, planner, worker, and reviewer on that same Copilot, and never on the other account.
 
 Orchestrator: `~/.copilot/agents/orchestrator.agent.md`. It spawns `explorer`, `planner`, `worker`, and `reviewer` from `~/.copilot/agents`. Select session option `agent=orchestrator` when starting a Copilot development thread.
 

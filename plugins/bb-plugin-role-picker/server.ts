@@ -54,6 +54,10 @@ type SpawnSpec = {
 // Copilot model ids are the copilot-acp picker ids, <model>[-standard][-<effort>]: no -standard
 // is the 1M context tier. A bare id such as gpt-6.1-terra is not in the picker and the thread
 // silently falls back to auto, so every Copilot id here carries -medium.
+// Both GitHub Copilot providers: the user's own account and the SopraSteria account. They run
+// the same launcher, agents, and logic; only the gh login differs. A thread on one stays on it.
+const COPILOT_PROVIDERS = new Set(["acp-github-copilot-cli", "acp-github-copilot-sopra"]);
+
 // Reviewers by id. Fallback order is per worker provider in REVIEW_ORDER.
 const REVIEWERS: Record<string, SpawnSpec> = {
   gemini: { providerId: "acp-antigravity", model: "gemini-4-argon", reasoningLevel: "medium" },
@@ -74,23 +78,41 @@ const REVIEWERS: Record<string, SpawnSpec> = {
 const REVIEW_ORDER: Record<string, string[]> = {
   "claude-code": ["gemini", "copilot-sol", "cursor"],
   "acp-github-copilot-cli": ["copilot-opus"],
+  "acp-github-copilot-sopra": ["copilot-opus"],
   "acp-cursor": ["cursor"],
   "acp-antigravity": ["copilot-opus", "codex", "claude-opus"],
   codex: ["gemini", "claude-opus", "copilot-sol"],
 };
 
-const SAME_PROVIDER_REVIEW = new Set(["acp-github-copilot-cli", "acp-cursor"]);
+const SAME_PROVIDER_REVIEW = new Set([...COPILOT_PROVIDERS, "acp-cursor"]);
 
-function reviewChain(parentProviderId: string): string[] {
+function reviewChain(parentProviderId: string): SpawnSpec[] {
   const order = REVIEW_ORDER[parentProviderId] ?? ["gemini", "claude-opus", "codex"];
   // Copilot and Cursor review their own work on another vendor's model; everyone else leaves their provider.
   const seen = new Set<string>(SAME_PROVIDER_REVIEW.has(parentProviderId) ? [] : [parentProviderId]);
-  return order.filter((id) => {
-    const providerId = REVIEWERS[id]?.providerId;
-    if (!providerId || seen.has(providerId)) return false;
-    seen.add(providerId);
-    return true;
-  });
+  const chain: SpawnSpec[] = [];
+  for (const id of order) {
+    const base = REVIEWERS[id];
+    if (!base) continue;
+    // A Copilot worker's review runs on that same Copilot account, never the other one.
+    const spec = COPILOT_PROVIDERS.has(parentProviderId) && COPILOT_PROVIDERS.has(base.providerId)
+      ? { ...base, providerId: parentProviderId }
+      : base;
+    if (seen.has(spec.providerId)) continue;
+    seen.add(spec.providerId);
+    chain.push(spec);
+  }
+  return chain;
+}
+
+// Records written before chains held specs stored reviewer ids.
+function reviewerAt(record: ReviewRecord, index: number): SpawnSpec {
+  const entry = record.chain[index];
+  return typeof entry === "string" ? REVIEWERS[entry] : entry;
+}
+
+function chainProviders(record: ReviewRecord): string {
+  return record.chain.map((_, i) => reviewerAt(record, i).providerId).join(", ");
 }
 
 function spawnSpec(parentProviderId: string, name: Exclude<SpawnName, "review">): SpawnSpec {
@@ -110,13 +132,13 @@ function spawnSpec(parentProviderId: string, name: Exclude<SpawnName, "review">)
     }[name];
     return { providerId: "claude-code", reasoningLevel: "medium", ...claude };
   }
-  if (parentProviderId === "acp-github-copilot-cli") {
+  if (COPILOT_PROVIDERS.has(parentProviderId)) {
     const copilot = {
       explore: { model: "claude-haiku-5.5-medium", reasoningLevel: "medium", sessionOptions: { agent: "explorer" } },
       contribute: { model: "gpt-6.1-terra-medium", reasoningLevel: "medium", sessionOptions: { agent: "worker" } },
       plan: { model: "claude-opus-5.5-medium", reasoningLevel: "medium", sessionOptions: { agent: "planner" } },
     }[name];
-    return { providerId: "acp-github-copilot-cli", ...copilot };
+    return { providerId: parentProviderId, ...copilot };
   }
   return { providerId: parentProviderId };
 }
@@ -129,7 +151,7 @@ type ReviewRecord = {
   orchestratorId: string;
   worker: string;
   body: string;
-  chain: string[];
+  chain: (SpawnSpec | string)[];
   index: number;
   projectId: string;
   environmentId: string | null;
@@ -328,7 +350,7 @@ export default async function plugin(bb: BbPluginApi) {
         };
         const spawned = await spawnReviewer(record);
         if (!spawned) {
-          return fail(`No reviewer is available: every review provider for a ${parent.providerId} worker (${record.chain.map((id) => REVIEWERS[id].providerId).join(", ")}) is out of quota or unavailable. Ask the user.`);
+          return fail(`No reviewer is available: every review provider for a ${parent.providerId} worker (${chainProviders(record)}) is out of quota or unavailable. Ask the user.`);
         }
         return {
           content: [{
@@ -418,7 +440,7 @@ export default async function plugin(bb: BbPluginApi) {
     replaces?: string,
   ): Promise<{ id: string; status: string; providerId: string } | null> {
     for (let index = record.index; index < record.chain.length; index++) {
-      const spec = REVIEWERS[record.chain[index]];
+      const spec = reviewerAt(record, index);
       const providerId = spec.providerId;
       if (!(await providerAvailable(providerId))) continue;
       const defined = spec.agent ? agentDefinition(spec.agent, (message) => bb.log.warn(message)) : undefined;
@@ -462,7 +484,7 @@ export default async function plugin(bb: BbPluginApi) {
     if (!quota) return;
     await kv.delete(reviewKey(event.threadId));
 
-    const failedProvider = REVIEWERS[record.chain[record.index]].providerId;
+    const failedProvider = reviewerAt(record, record.index).providerId;
     const resets = (event.rateLimits?.windows ?? [])
       .filter((w) => w.status === "blocked" && typeof w.resetsAtMs === "number")
       .map((w) => w.resetsAtMs as number);
@@ -481,7 +503,7 @@ export default async function plugin(bb: BbPluginApi) {
         ].join("\n")
       : [
           `Reviewer ${event.threadId} on ${failedProvider} stopped: provider quota reached (${category ?? "rate limit"}).`,
-          `No other review provider is available for worker ${record.worker} (tried ${record.chain.map((id) => REVIEWERS[id].providerId).join(", ")}). Ask the user how to proceed.`,
+          `No other review provider is available for worker ${record.worker} (tried ${chainProviders(record)}). Ask the user how to proceed.`,
         ].join("\n");
     await bb.sdk.threads
       .send({ threadId: record.orchestratorId, mode: "auto", input: [{ type: "text", text, mentions: [] }] })
