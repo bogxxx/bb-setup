@@ -66,12 +66,9 @@ function makeSlot(): HTMLDivElement {
 }
 
 function modelRowFor(anchor: HTMLElement): HTMLElement | null {
-  const action = anchor.closest("[data-plugin-composer-action]");
-  const modelRow = action?.parentElement?.previousElementSibling;
-  if (!(modelRow instanceof HTMLElement) || !modelRow.hasAttribute("data-promptbox-expanded-only")) {
-    return null;
-  }
-  return modelRow;
+  const actionRow = anchor.closest("[data-promptbox-action-row]");
+  const modelRow = actionRow?.querySelector(":scope > [data-promptbox-expanded-only]");
+  return modelRow instanceof HTMLElement ? modelRow : null;
 }
 
 function useRoleSlot() {
@@ -92,13 +89,12 @@ function useRoleSlot() {
 
     const claim = (parent: Element, placeNode: (host: HTMLElement) => void): HTMLElement => {
       const existing = directSlot(parent);
-      if (existing) {
-        if (owned && owned !== existing) releaseOwned();
-        owned = existing;
+      if (existing && existing !== owned) {
+        releaseOwned();
         placeNode(existing);
         return existing;
       }
-      const host = owned ?? makeSlot();
+      const host = existing ?? owned ?? makeSlot();
       placeNode(host);
       owned = host;
       return host;
