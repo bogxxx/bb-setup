@@ -11,6 +11,16 @@ Detect the provider with `bb thread show $env:BB_THREAD_ID --json` and read `pro
 
 Model ids below were present in `bb provider models <provider> --environment env_chay9bmgz7` on this machine. Re-check the live catalog before spawning if the catalog may have changed. A spawn override sets provider, model, and reasoning level together. Omitting all three inherits the parent.
 
+## Review rule
+
+The reviewer is always a different model family from the worker that wrote the code. Its blind spots should not match the worker's.
+
+| Provider | Worker | Reviewer |
+| --- | --- | --- |
+| Cursor | Grok 4.7 | Meta Muse (`cantrip-review`) |
+| GitHub Copilot | GPT 6.1 Terra | Claude Opus 5.5 (`reviewer`) |
+| Claude Code | Claude Haiku 5.5 | Gemini 4 Argon (Antigravity) |
+
 ## Cursor (`acp-cursor`)
 
 Orchestrator: `~/.cursor/agents/cantrip-goal.md`. It spawns `cantrip-explore`, `cantrip-plan`, `cantrip-implement`, and `cantrip-review`.
@@ -61,8 +71,11 @@ bb thread spawn --project $env:BB_PROJECT_ID --parent-self --environment $env:BB
 bb thread wait <thread-id>
 ```
 
-Do not pass `--option agent=reviewer` on this spawn. That agent is Opus 5.5. The prompt must tell Argon to review and not edit. Wait for it, because the review gates completion. Allow at most two fix rounds.
+Do not pass `--option agent=reviewer` on this spawn. That option is a Copilot persona, which runs Opus 5.5, and Antigravity reports no session options. The prompt must tell Argon to review and not edit. Wait for it, because the review gates completion. Allow at most two fix rounds.
 
 ## Any other provider
 
-Explore, plan, and implement with models from that provider's live catalog. Send the review to the Antigravity Argon reviewer persona: provider `acp-antigravity`, model `gemini-4-argon`, reasoning level `medium`, `--option agent=reviewer`. Do not invent a model id.
+Explore, plan, and implement with models from that provider's live catalog. Do not invent a model id. Follow the review rule: the reviewer's family must differ from the worker's.
+
+- Worker is not Gemini: review with Gemini 4 Argon. Use provider `acp-antigravity`, model `gemini-4-argon` and reasoning level `medium`, with the same spawn as Claude Code. Do not pass `--option agent=reviewer`.
+- Worker is Gemini, for example on Antigravity: review with the Copilot reviewer persona. Use provider `acp-github-copilot-cli`, model `claude-opus-5.5`, reasoning level `medium` and `--option agent=reviewer`.
