@@ -56,3 +56,18 @@ git clone https://github.com/bogxxx/bb-setup $HOME\src\bb-setup
 It links the folders, copies the files, builds and installs the local plugins, installs the git and npm plugins, clones local plugins that have a git remote (such as `burn`), matches the builtin on/off state and applies the settings. You can run it again safely.
 
 Not included: plugin secrets, bb account sign-in, gh and provider logins, `bb.db`, and thread data. Set those up by hand. `bb/plugin-settings.json` stores `provider-acp.customAgents`, and that value still has macOS paths for the Copilot agent. Check it on Windows.
+
+## macOS
+
+```bash
+T=$(gh auth token --user bogxxx)
+git clone https://x-access-token:$T@github.com/bogxxx/bb-setup ~/src/bb-setup
+git -C ~/src/bb-setup remote set-url origin https://github.com/bogxxx/bb-setup
+~/src/bb-setup/scripts/sync.sh -m "What changed"
+```
+
+`scripts/sync.sh` is the macOS counterpart of `sync.ps1`. Its first run is the install. It pulls first, then symlinks `~/.bb/skills/provider-orchestration`, `~/.claude/agents`, `~/.bb/AGENTS.md` and `~/.claude/CLAUDE.md` into the repo. macOS can link single files, so nothing is copied. Existing files are moved to `*.bak-<timestamp>`, and a local file that is newer than the repo copy is copied into the repo first. Then it commits and pushes. Options: `-m`, `--dry-run`, `--no-push`.
+
+Plugins and plugin settings live on the bb server. When this Mac is only an enrolled host and the server runs on Windows, the script skips exporting them, so `plugins.json` keeps the Windows host's view. `--plugins` forces the export, and `--no-plugins` skips it.
+
+Git pulls and pushes use the `bogxxx` gh account's token for that one command. The script never runs `gh auth switch`, because bb's Copilot integration depends on the active gh account. Set `BB_SETUP_GH_USER` to use another account.
