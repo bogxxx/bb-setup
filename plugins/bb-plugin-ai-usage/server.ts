@@ -46,6 +46,8 @@ interface Cache {
   probedAt: number;
   probing: Promise<Probe | null> | null;
   probeError: string | null;
+  stage: string;
+  stageAt: number;
   report: Report | null;
   hash: string | null;
   reportAt: number | null;
@@ -77,7 +79,7 @@ export default async function plugin(bb: BbPluginApi) {
   const cache = (hostId: string): Cache => {
     let c = caches.get(hostId);
     if (c === undefined) {
-      c = { probe: null, probedAt: 0, probing: null, probeError: null, report: null, hash: null, reportAt: null, reportCheckedAt: 0, reportState: null, refreshing: null };
+      c = { probe: null, probedAt: 0, probing: null, probeError: null, stage: "idle", stageAt: 0, report: null, hash: null, reportAt: null, reportCheckedAt: 0, reportState: null, refreshing: null };
       caches.set(hostId, c);
     }
     return c;
@@ -257,9 +259,12 @@ export default async function plugin(bb: BbPluginApi) {
     if (c.refreshing !== null) return c.refreshing;
     bb.log.info(`refresh of ${labelOf(hostId)} started`);
     c.refreshing = (async () => {
+      c.stage = "probe"; c.stageAt = Date.now();
       const probe = await probeHost(hostId);
       if (probe === null || probe.bin === null) return;
+      c.stage = "run"; c.stageAt = Date.now();
       take(hostId, await run(hostId, probe, ["report", "--json"], TIMEOUT.report, { json: true }));
+      c.stage = "attach"; c.stageAt = Date.now();
       await attachMachines(hostId);
     })()
       .catch((error: unknown) => {
@@ -314,7 +319,7 @@ export default async function plugin(bb: BbPluginApi) {
       app: p?.app ?? false,
       scheduleEntry: p?.scheduleEntry ?? false,
       auto: auto?.outcome === "installing" || auto?.outcome === "installed" || auto?.outcome === "failed",
-      error: f.report?.error ?? p?.error ?? f.probeError ?? null,
+      error: f.report?.error ?? p?.error ?? f.probeError ?? (id !== null && cache(id).refreshing !== null ? `diag: stage ${cache(id).stage} for ${Math.round((Date.now() - cache(id).stageAt) / 1000)} s` : null),
     };
   }
 
