@@ -7,6 +7,17 @@ Captures the live BB setup into this repo, then commits and pushes.
   .\scripts\sync.ps1 -DryRun            # capture only, show git status
 #>
 param([Alias('m')][string]$Message = 'Sync BB setup', [switch]$NoPush, [switch]$DryRun)
+
+# Windows PowerShell 5.1 and pwsh 7 write different JSON (indentation, escaping), and the
+# committed files use the pwsh format. Re-run under pwsh when it exists so the output is stable.
+if ($PSVersionTable.PSVersion.Major -lt 7 -and (Get-Command pwsh -ErrorAction SilentlyContinue)) {
+  $argv = @('-NoProfile', '-File', $PSCommandPath, '-Message', $Message)
+  if ($NoPush) { $argv += '-NoPush' }
+  if ($DryRun) { $argv += '-DryRun' }
+  & pwsh @argv
+  exit $LASTEXITCODE
+}
+
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib.ps1"
 
@@ -28,7 +39,8 @@ foreach ($p in ($plugins | Sort-Object id)) {
     if ($path.StartsWith($repoFull, [StringComparison]::OrdinalIgnoreCase)) {
       $entry.source = 'repo:' + $path.Substring($repoFull.Length + 1).Replace('\', '/')
     } else {
-      $origin = git -C $path remote get-url origin 2>$null
+      # Under 5.1 with 'Stop', redirected stderr from a native command throws.
+      $origin = try { git -C $path remote get-url origin 2>$null } catch { $null }
       if ($origin) { $entry.clone = $origin; $entry.path = $path.Replace($HOME, '~') }
       else { Write-Warning "$($p.id) is a local path outside the repo with no git remote: $path" }
     }
@@ -58,12 +70,28 @@ foreach ($p in ($plugins | Where-Object { $_.hasSettings } | Sort-Object id)) {
 $settings | ConvertTo-Json -Depth 5 | Set-Content "$Repo\bb\plugin-settings.json" -Encoding utf8
 Write-Host "  $($installed.Count) installed plugins, $($settings.Count) with custom settings"
 
+# Git writes warnings (CRLF, push hints) to stderr; check exit codes instead of letting
+# 5.1 turn stderr into terminating errors.
+$ErrorActionPreference = 'Continue'
 Push-Location $Repo
 try {
   git -c core.safecrlf=false add -A
+  if ($LASTEXITCODE) { throw "git add failed ($LASTEXITCODE)" }
   if ($DryRun) { git status --short; return }
-  if (-not (git status --porcelain)) { Write-Host 'No changes.'; return }
+  if (-not (git status --porcelain)) {
+    Write-Host 'No changes.'
+    # Still push commits made outside this script (for example by git am).
+    if (-not $NoPush -and (git rev-list --count '@{u}..HEAD' 2>$null) -gt 0) {
+      git push -q; if ($LASTEXITCODE) { throw "git push failed ($LASTEXITCODE)" }
+      Write-Host 'Pushed.'
+    }
+    return
+  }
   git commit -q -m $Message
+  if ($LASTEXITCODE) { throw "git commit failed ($LASTEXITCODE)" }
   Write-Host "Committed: $Message"
-  if (-not $NoPush) { git push -q; Write-Host 'Pushed.' }
+  if (-not $NoPush) {
+    git push -q; if ($LASTEXITCODE) { throw "git push failed ($LASTEXITCODE)" }
+    Write-Host 'Pushed.'
+  }
 } finally { Pop-Location }
