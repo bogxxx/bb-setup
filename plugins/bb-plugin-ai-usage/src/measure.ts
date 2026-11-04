@@ -65,8 +65,10 @@ async function codex(): Promise<MeasuredProvider | null> {
   const token = auth.tokens?.access_token;
   const account = auth.tokens?.account_id;
   if (!token || !account) return null;
+  // A stalled connection would hold the machine's answer forever, so the request has a limit.
   const response = await fetch("https://chatgpt.com/backend-api/wham/usage", {
     headers: { Authorization: `Bearer ${token}`, "ChatGPT-Account-Id": account, "User-Agent": "codex-cli" },
+    signal: AbortSignal.timeout(20_000),
   });
   if (!response.ok) return null;
   const body = (await response.json()) as {
