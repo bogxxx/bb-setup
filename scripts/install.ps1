@@ -33,7 +33,8 @@ if (-not $SkipPlugins) {
       if (-not (Test-Path $dir)) { git clone $e.clone $dir }
       if (-not $current[$e.id]) { bb plugin install $dir --yes }
     } elseif (-not $current[$e.id]) {
-      bb plugin install $e.source --yes
+      if ($e.subdirectory) { bb plugin install $e.source --subdirectory $e.subdirectory --yes }
+      else { bb plugin install $e.source --yes }
     }
     if (-not $e.enabled) { bb plugin disable $e.id | Out-Null }
   }

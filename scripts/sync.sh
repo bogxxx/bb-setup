@@ -135,6 +135,14 @@ if [ "$PLUGINS" = 1 ]; then
           else console.error(`warning: ${p.id} is a local path outside the repo with no git remote: ${dir}`);
         }
       }
+      // A git plugin may live in a subdirectory of its repo; bb records that, so the manifest keeps it.
+      else {
+        try {
+          const said = cp.execFileSync("bb", ["plugin", "source", p.id], { stdio: ["ignore", "pipe", "ignore"] }).toString();
+          const sub = said.match(/^\s*subdirectory:\s*(.+?)\s*$/m);
+          if (sub) e.subdirectory = sub[1];
+        } catch {}
+      }
       installed.push(e);
     }
     fs.writeFileSync(path.join(repo, "bb/plugins.json"), JSON.stringify({ installed, builtinsEnabled }, null, 2) + "\n");

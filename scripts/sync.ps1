@@ -34,6 +34,11 @@ $installed = @(); $builtins = [ordered]@{}
 foreach ($p in ($plugins | Sort-Object id)) {
   if ($p.source -like 'builtin:*') { $builtins[$p.id] = [bool]$p.enabled; continue }
   $entry = [ordered]@{ id = $p.id; source = $p.source; enabled = [bool]$p.enabled }
+  if ($p.source -notlike 'path:*') {
+    # A git plugin may live in a subdirectory of its repo; bb records that, so the manifest keeps it.
+    $said = (bb plugin source $p.id 2>$null | Out-String)
+    if ($said -match '(?m)^\s*subdirectory:\s*(.+?)\s*$') { $entry.subdirectory = $Matches[1] }
+  }
   if ($p.source -like 'path:*') {
     $path = $p.source.Substring(5)
     if ($path.StartsWith($repoFull, [StringComparison]::OrdinalIgnoreCase)) {
