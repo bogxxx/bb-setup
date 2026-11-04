@@ -22,6 +22,18 @@ export interface SpawnOptions {
 }
 
 const MAX_STDERR = 256 * 1024;
+/** After a kill, how long to wait for the pipes to close before answering anyway. */
+export const GIVE_UP_MS = 8000;
+
+/** Stops the child and, on Windows, everything it started (taskkill /T), so nothing keeps the pipes open. */
+function killTree(child: ReturnType<typeof spawn>): void {
+  if (process.platform === "win32" && child.pid !== undefined) {
+    const kill = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+    kill.on("error", () => child.kill());
+    return;
+  }
+  child.kill("SIGTERM");
+}
 
 export function run(command: string, args: string[], options: SpawnOptions): Promise<Spawned> {
   return new Promise((resolve) => {
@@ -60,10 +72,13 @@ export function run(command: string, args: string[], options: SpawnOptions): Pro
       lines("err", chunk);
     });
     let killer: NodeJS.Timeout | undefined;
+    let giveUp: NodeJS.Timeout | undefined;
     const stop = () => {
       if (done) return;
-      child.kill("SIGTERM");
+      killTree(child);
       killer = setTimeout(() => child.kill("SIGKILL"), 5000);
+      // A grandchild that inherited the pipes keeps 'close' from firing, so answer after a grace period anyway.
+      giveUp = setTimeout(() => finish(null), GIVE_UP_MS);
     };
     const timer = setTimeout(() => {
       timedOut = true;
@@ -76,6 +91,7 @@ export function run(command: string, args: string[], options: SpawnOptions): Pro
       done = true;
       clearTimeout(timer);
       if (killer !== undefined) clearTimeout(killer);
+      if (giveUp !== undefined) clearTimeout(giveUp);
       options.signal?.removeEventListener("abort", onAbort);
       if (options.onLine !== undefined) {
         if (pending.out !== "") options.onLine(pending.out, "out");

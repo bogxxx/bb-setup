@@ -10,6 +10,7 @@ import { hostContract, hostSignals, type MeasuredUsage, type Probe, type RunOutp
 import { inviteMessage } from "./src/invite.js";
 import { teamSource, type TeamSource } from "./src/team-source.js";
 import { BusyError, Jobs } from "./src/jobs.js";
+import { withDeadline } from "./src/deadline.js";
 import { autoInstallable, installRefusal, NOTHING_COLLECTED, phaseOf, type HostFacts } from "./src/phase.js";
 import { fillMatrixFromBurn } from "./src/burn-matrix.js";
 import { machineInMatrix, mergeMeasured } from "./src/local-providers.js";
@@ -44,6 +45,7 @@ interface Cache {
   probe: Probe | null;
   probedAt: number;
   probing: Promise<Probe | null> | null;
+  probeError: string | null;
   report: Report | null;
   hash: string | null;
   reportAt: number | null;
@@ -75,7 +77,7 @@ export default async function plugin(bb: BbPluginApi) {
   const cache = (hostId: string): Cache => {
     let c = caches.get(hostId);
     if (c === undefined) {
-      c = { probe: null, probedAt: 0, probing: null, report: null, hash: null, reportAt: null, reportCheckedAt: 0, reportState: null, refreshing: null };
+      c = { probe: null, probedAt: 0, probing: null, probeError: null, report: null, hash: null, reportAt: null, reportCheckedAt: 0, reportState: null, refreshing: null };
       caches.set(hostId, c);
     }
     return c;
@@ -100,19 +102,34 @@ export default async function plugin(bb: BbPluginApi) {
     return { record, id, bbPlatform: id === h.primaryId ? h.primaryPlatform : null };
   }
 
+  /** The name BB gives a machine, for messages. */
+  function labelOf(hostId: string): string {
+    return hostList?.hosts.find((x) => x.id === hostId)?.name ?? hostId;
+  }
+
+  /**
+   * Calls a machine with a hard limit: the host call's own timeout plus slack. A machine that stops
+   * answering rejects here, so the work waiting on it always ends and clears its in-flight flag.
+   */
+  function callHost(method: Parameters<typeof host.call>[0], input: Parameters<typeof host.call>[1], opts: { hostId: string; timeoutMs: number }): Promise<any> {
+    return withDeadline(host.call(method, input, opts), opts.timeoutMs + 5_000, labelOf(opts.hostId));
+  }
+
   function probeHost(hostId: string, force = false): Promise<Probe | null> {
     const c = cache(hostId);
     if (!force && c.probe !== null && Date.now() - c.probedAt < PROBE_TTL) return Promise.resolve(c.probe);
     if (c.probing !== null) return c.probing;
-    c.probing = host
-      .call("probe", {}, { hostId, timeoutMs: TIMEOUT.probe })
-      .then((p) => {
+    c.probing = callHost("probe", {}, { hostId, timeoutMs: TIMEOUT.probe })
+      .then((p: Probe) => {
         c.probe = p;
         c.probedAt = Date.now();
+        c.probeError = null;
         return p;
       })
       .catch((error: unknown) => {
-        bb.log.warn(`probe of ${hostId} failed: ${error instanceof Error ? error.message : String(error)}`);
+        const message = error instanceof Error ? error.message : String(error);
+        c.probeError = message;
+        bb.log.warn(`probe of ${hostId} failed: ${message}`);
         return c.probe;
       })
       .finally(() => {
@@ -124,7 +141,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   function run(hostId: string, probe: Probe, args: string[], timeoutMs: number, opts: { stdin?: string; json?: boolean } = {}): Promise<RunOutput> {
     if (probe.bin === null) throw new Error("ai-usage is not installed on this machine");
-    return host.call(
+    return callHost(
       "run",
       { bin: probe.bin, aiHome: probe.aiHome, args, stdin: opts.stdin ?? null, json: opts.json ?? false, timeoutMs },
       { hostId, timeoutMs: timeoutMs + 15_000 },
@@ -190,7 +207,7 @@ export default async function plugin(bb: BbPluginApi) {
         .filter((machine) => machine.status === "connected")
         .map(async (machine) => {
           try {
-            const measured = await host.call("extras", {}, { hostId: machine.id, timeoutMs: 30_000 });
+            const measured = await callHost("extras", {}, { hostId: machine.id, timeoutMs: 30_000 });
             await bb.storage.kv.set(`snapshot:${machine.id}`, { at: Date.now(), name: machine.name, alias: measured.hostName, user: measured.user, providers: measured.providers } satisfies Snapshot);
             return { id: machine.id, measured };
           } catch (error) {
@@ -232,8 +249,10 @@ export default async function plugin(bb: BbPluginApi) {
       await attachMachines(hostId);
     })()
       .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
         c.reportCheckedAt = Date.now();
-        bb.log.warn(`report of ${hostId} failed: ${error instanceof Error ? error.message : String(error)}`);
+        c.reportState = { ok: false, schemaMismatch: false, nothingCollected: false, error: message };
+        bb.log.warn(`report of ${hostId} failed: ${message}`);
       })
       .finally(() => {
         c.refreshing = null;
@@ -252,6 +271,7 @@ export default async function plugin(bb: BbPluginApi) {
         host: record === null ? null : { status: record.status, type: record.type },
         bbPlatform,
         probe: c?.probe ?? null,
+        probeError: c?.probeError ?? null,
         job: id === null ? null : jobs.latest(id),
         report: c?.reportState ?? null,
       },
@@ -279,7 +299,7 @@ export default async function plugin(bb: BbPluginApi) {
       app: p?.app ?? false,
       scheduleEntry: p?.scheduleEntry ?? false,
       auto: auto?.outcome === "installing" || auto?.outcome === "installed" || auto?.outcome === "failed",
-      error: f.report?.error ?? p?.error ?? null,
+      error: f.report?.error ?? p?.error ?? f.probeError ?? null,
     };
   }
 
@@ -330,7 +350,7 @@ export default async function plugin(bb: BbPluginApi) {
     return startJob(hostId, "install", async (job, log) => {
       if (auto) await record(hostId, "installing");
       try {
-        const out = await host.call("install", { jobId: job.id, teamKey, relay }, { hostId, timeoutMs: TIMEOUT.install });
+        const out = await callHost("install", { jobId: job.id, teamKey, relay }, { hostId, timeoutMs: TIMEOUT.install });
         if (!out.ok) throw new Error(out.message);
         await record(hostId, "installed");
         bb.log.info(`installed ai-usage ${out.tag ?? ""} on ${hostId}`);
@@ -360,7 +380,7 @@ export default async function plugin(bb: BbPluginApi) {
       key: async (id) => check(await run(id, (await probeHost(id))!, ["team", "key"], TIMEOUT.short)),
       relay: async (id) => {
         const p = (await probeHost(id))!;
-        return host.call("relay", { bin: p.bin!, aiHome: p.aiHome }, { hostId: id, timeoutMs: TIMEOUT.short });
+        return callHost("relay", { bin: p.bin!, aiHome: p.aiHome }, { hostId: id, timeoutMs: TIMEOUT.short });
       },
     });
   }
@@ -509,7 +529,7 @@ export default async function plugin(bb: BbPluginApi) {
       // team key on a machine that never collected makes a new team, so ask only once it has.
       if (cache(t.id).reportState?.ok !== true) throw new Error("Invite works once this machine has collected");
       const key = check(await run(t.id, t.probe, ["team", "key"], TIMEOUT.short));
-      const relay = await host.call("relay", { bin: t.probe.bin, aiHome: t.probe.aiHome }, { hostId: t.id, timeoutMs: TIMEOUT.short });
+      const relay = await callHost("relay", { bin: t.probe.bin, aiHome: t.probe.aiHome }, { hostId: t.id, timeoutMs: TIMEOUT.short });
       return { message: inviteMessage(key, relay) };
     },
     update: async ({ hostId }, context) => {

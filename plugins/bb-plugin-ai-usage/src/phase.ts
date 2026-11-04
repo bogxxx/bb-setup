@@ -8,6 +8,8 @@ export interface HostFacts {
   /** The platform BB reports for its primary machine, which tells WSL apart. */
   bbPlatform: string | null;
   probe: Probe | null;
+  /** Why the last probe of the machine failed, when it did; null while the machine has answered. */
+  probeError?: string | null;
   job: JobView | null;
   report: {
     ok: boolean;
@@ -28,7 +30,7 @@ export function phaseOf(f: HostFacts): Phase {
   if (f.host === null) return "no-host";
   if (f.job?.kind === "install" && f.job.status === "running") return "installing";
   if (f.host.status === "disconnected") return "offline";
-  if (f.probe === null) return "loading";
+  if (f.probe === null) return f.probeError ? "error" : "loading";
   if (f.probe.bin === null) return f.job?.kind === "install" && f.job.status === "failed" ? "install-failed" : "absent";
   if (f.report?.schemaMismatch === true) return "schema-mismatch";
   if (f.report?.ok === true) return "ready";
