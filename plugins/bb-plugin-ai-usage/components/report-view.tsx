@@ -169,7 +169,7 @@ function MatrixBlock({ report }: { report: Report }) {
                     {c.state !== null ? <Dot state={c.state} /> : null}
                     <span className="whitespace-nowrap">{c.title}</span>
                   </span>
-                  <div className="text-[10px] font-normal">{provider(c.provider)}</div>
+                  {c.account !== null ? <div className="text-[10px] font-normal">{c.account}</div> : null}
                 </th>
               ))}
               <th className="px-3 py-2 text-right font-medium">Total</th>

@@ -294,7 +294,8 @@ function addOpenClaw(parsed: unknown, gravity: string | undefined, add: (item: M
 }
 
 /** Auth files for providers ai-usage does not measure. A Copilot token stored by another app is not a second subscription. */
-function otherLogins(have: MeasuredProvider[]): MeasuredProvider[] {
+// Gemini is not a subscription of its own here: its sign-in is Antigravity's, and Antigravity's card carries the Gemini limits.
+export function otherLogins(have: MeasuredProvider[]): MeasuredProvider[] {
   const names = new Map(have.map((item) => [item.provider, item.name]));
   const out: MeasuredProvider[] = [];
   const add = (item: MeasuredProvider | null) => {
@@ -308,22 +309,14 @@ function otherLogins(have: MeasuredProvider[]): MeasuredProvider[] {
     { provider: "pi", paths: [home(".pi", "agent", "auth.json"), home(".pi", "auth.json"), home(".config", "pi", "auth.json")] },
     { provider: "omp", paths: [home(".omp", "auth.json"), home(".config", "omp", "auth.json")] },
     { provider: "openai", paths: [home(".openai", "auth.json"), home(".config", "openai", "auth.json")] },
-    { provider: "gemini", paths: [home(".gemini", "oauth_creds.json"), home(".gemini", "google_accounts.json")] },
   ];
   for (const spec of specs) {
     const file = firstFile(spec.paths);
     if (file === null) continue;
     const item = fileLogin(spec.provider, file);
     if (item === null) continue;
-    if (spec.provider === "gemini") {
-      const gravity = names.get("antigravity");
-      if (gravity !== undefined && (item.name === gravity || item.name === "gemini")) continue;
-    }
     if (spec.provider === "openai" && names.has("codex") && (item.name === "openai" || item.name === names.get("codex"))) continue;
     add(item);
-  }
-  if (firstFile([home(".gemini", "gemini-credentials.json")]) !== null && !names.has("antigravity") && !out.some((item) => item.provider === "gemini")) {
-    add({ provider: "gemini", name: "Gemini", plan: null, windows: [] });
   }
   for (const file of [home(".hermes", "config.yaml"), home(".hermes", "config.yml"), home(".hermes", ".env")]) {
     if (textHasSecret(file)) {

@@ -222,7 +222,9 @@ export function matrixView(r: Report, p: "today" | "7d" | "30d" | "90d") {
     columns: columns.map((c: MatrixColumn) => ({
       key: `${c.provider}/${c.no_quota ? "" : (c.label ?? c.name)}`,
       provider: c.provider,
-      title: c.no_quota ? "no quota" : c.name,
+      // The header names the provider; the account is added only when two columns share one.
+      title: provider(c.provider),
+      account: c.no_quota ? "no quota" : columns.filter((other) => other.provider === c.provider).length > 1 ? c.name : null,
       state: c.no_quota || c.state === "unknown" ? null : c.state,
       total: tokensM(shown(c)[p]),
     })),

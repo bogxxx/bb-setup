@@ -502,9 +502,12 @@ export function machineInMatrix(report: Report, hostName: string, user: string, 
   });
 }
 
-/** Copilot has no price and no token series. The column is present so the seat is visible; its cells stay empty. */
+/**
+ * A seat with no token series still gets its column, so it is visible: Copilot and Cursor have
+ * no token series here. Their cells stay empty and show the en dash; the quota is on the card.
+ */
 function seatInMatrix(report: Report, provider: string, name: string, state: string): void {
-  if (provider !== "copilot") return;
+  if (provider !== "copilot" && provider !== "cursor") return;
   const columns = report.team.matrix.columns;
   if (!columns.some((c) => c.provider === provider && c.name === name)) {
     columns.push({
