@@ -11,6 +11,7 @@ import { inviteMessage } from "./src/invite.js";
 import { teamSource, type TeamSource } from "./src/team-source.js";
 import { BusyError, Jobs } from "./src/jobs.js";
 import { withDeadline } from "./src/deadline.js";
+import { refreshTargets, staggerMs } from "./src/schedule.js";
 import { autoInstallable, installRefusal, NOTHING_COLLECTED, phaseOf, type HostFacts } from "./src/phase.js";
 import { fillMatrixFromBurn } from "./src/burn-matrix.js";
 import { machineInMatrix, mergeMeasured } from "./src/local-providers.js";
@@ -62,6 +63,17 @@ interface AutoRecord {
 export default async function plugin(bb: BbPluginApi) {
   const host = bb.hosts.experimental_client({ contract: hostContract, experimental_signals: hostSignals });
   const caches = new Map<string, Cache>();
+  const pending = new Set<ReturnType<typeof setTimeout>>();
+  /** Starts each refresh a step after the one before it. */
+  const refreshSoon = (ids: string[]) => {
+    ids.forEach((id, index) => {
+      const timer = setTimeout(() => {
+        pending.delete(timer);
+        void refresh(id);
+      }, staggerMs(index));
+      pending.add(timer);
+    });
+  };
   let hostList: { at: number; hosts: HostRecord[]; primaryId: string | null; primaryPlatform: string | null } | null = null;
 
   const jobs = new Jobs({
@@ -434,6 +446,31 @@ export default async function plugin(bb: BbPluginApi) {
     return false;
   }
 
+  /** Refreshes every connected machine that has no refresh in flight, staggered. */
+  async function refreshConnected(reason: string): Promise<void> {
+    const h = await hosts(true);
+    const ids = refreshTargets(
+      h.hosts.map((x) => ({ id: x.id, connected: x.status === "connected", persistent: x.type === "persistent", refreshing: cache(x.id).refreshing !== null })),
+    );
+    bb.log.info(`refreshing ${ids.length} machine(s) after ${reason}`);
+    refreshSoon(ids);
+  }
+
+  // A plugin start or a machine's connection refreshes that machine without waiting for a poll.
+  void refreshConnected("start").catch((error: unknown) => {
+    bb.log.warn(`refresh after start failed: ${error instanceof Error ? error.message : String(error)}`);
+  });
+  const unsubscribeHosts = bb.sdk.subscribe({
+    event: "host:changed",
+    callback: (event) => {
+      if (event.changes.includes("host-connected")) {
+        void refreshConnected("a machine connected").catch((error: unknown) => {
+          bb.log.warn(`refresh after a connection failed: ${error instanceof Error ? error.message : String(error)}`);
+        });
+      }
+    },
+  });
+
   bb.background.service("auto-install", {
     async start(signal) {
       // The primary machine may connect after the server starts.
@@ -497,6 +534,8 @@ export default async function plugin(bb: BbPluginApi) {
           job: jobs.latest(x.id),
         });
       }
+      // A machine still loading with nothing in flight gets a refresh now; the answer does not wait for it.
+      refreshSoon(machines.filter((m) => m.connected && m.phase === "loading" && cache(m.id).refreshing === null).map((m) => m.id));
       return { machines };
     },
     demo: async (_input, context) => {
@@ -621,6 +660,9 @@ export default async function plugin(bb: BbPluginApi) {
   });
 
   bb.onDispose(() => {
+    unsubscribeHosts();
+    for (const timer of pending) clearTimeout(timer);
+    pending.clear();
     caches.clear();
   });
 }
