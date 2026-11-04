@@ -51,11 +51,14 @@ type SpawnSpec = {
   agent?: AgentRef;
 };
 
+// Copilot model ids are the copilot-acp picker ids, <model>[-standard][-<effort>]: no -standard
+// is the 1M context tier. A bare id such as gpt-6.1-terra is not in the picker and the thread
+// silently falls back to auto, so every Copilot id here carries -medium.
 // Reviewers by id. Fallback order is per worker provider in REVIEW_ORDER.
 const REVIEWERS: Record<string, SpawnSpec> = {
   gemini: { providerId: "acp-antigravity", model: "gemini-4-argon", reasoningLevel: "medium" },
-  "copilot-opus": { providerId: "acp-github-copilot-cli", model: "claude-opus-5.5", reasoningLevel: "medium", sessionOptions: { agent: "reviewer" } },
-  "copilot-sol": { providerId: "acp-github-copilot-cli", model: "gpt-6.1-sol", reasoningLevel: "medium", sessionOptions: { agent: "reviewer" } },
+  "copilot-opus": { providerId: "acp-github-copilot-cli", model: "claude-opus-5.5-medium", reasoningLevel: "medium", sessionOptions: { agent: "reviewer" } },
+  "copilot-sol": { providerId: "acp-github-copilot-cli", model: "gpt-6.1-sol-medium", reasoningLevel: "medium", sessionOptions: { agent: "reviewer" } },
   "claude-opus": { providerId: "claude-code", model: "claude-opus-5-5", reasoningLevel: "medium" },
   codex: { providerId: "codex", model: "gpt-6.1-sol", reasoningLevel: "medium" },
   // cantrip-review: its model and instructions come from the agent file.
@@ -109,9 +112,9 @@ function spawnSpec(parentProviderId: string, name: Exclude<SpawnName, "review">)
   }
   if (parentProviderId === "acp-github-copilot-cli") {
     const copilot = {
-      explore: { model: "claude-haiku-5.5", sessionOptions: { agent: "explorer" } },
-      contribute: { model: "gpt-6.1-terra", reasoningLevel: "medium", sessionOptions: { agent: "worker" } },
-      plan: { model: "claude-opus-5.5", sessionOptions: { agent: "planner" } },
+      explore: { model: "claude-haiku-5.5-medium", reasoningLevel: "medium", sessionOptions: { agent: "explorer" } },
+      contribute: { model: "gpt-6.1-terra-medium", reasoningLevel: "medium", sessionOptions: { agent: "worker" } },
+      plan: { model: "claude-opus-5.5-medium", reasoningLevel: "medium", sessionOptions: { agent: "planner" } },
     }[name];
     return { providerId: "acp-github-copilot-cli", ...copilot };
   }

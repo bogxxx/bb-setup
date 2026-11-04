@@ -63,17 +63,19 @@ Inside Cursor, review with `cantrip-review`.
 
 Orchestrator: `~/.copilot/agents/orchestrator.agent.md`. It spawns `explorer`, `planner`, `worker`, and `reviewer` from `~/.copilot/agents`. Select session option `agent=orchestrator` when starting a Copilot development thread.
 
-Confirmed catalog ids:
+Confirmed catalog ids, all on the 1M context tier:
 
 | Role | Model | Reasoning |
 | --- | --- | --- |
-| orchestrator | `claude-opus-5.5` | medium |
-| explorer | `claude-haiku-5.5` | catalog default medium |
-| planner | `claude-opus-5.5` | catalog default medium |
-| worker | `gpt-6.1-terra` | medium |
-| reviewer | `claude-opus-5.5` | medium |
+| orchestrator | `claude-opus-5.5-medium` | medium |
+| explorer | `claude-haiku-5.5-medium` | medium |
+| planner | `claude-opus-5.5-medium` | medium |
+| worker | `gpt-6.1-terra-medium` | medium |
+| reviewer | `claude-opus-5.5-medium` | medium |
 
-The reviewer tools are view, grep, glob, skill, bash, and powershell. Its shell is only for `bb thread tell`, `bb thread wait`, `bb thread output`, `bb status`, and read-only git and diff commands. It does not edit. The Copilot orchestrator spawns this agent by name. The BB `spawn` tool with name `review` sets provider `acp-github-copilot-cli`, model `claude-opus-5.5`, reasoning level `medium`, and `--option agent=reviewer`.
+When you start or spawn a Copilot thread with a model, use the 1M catalog id, which carries a `-medium` suffix and no `-standard` (`gpt-6.1-terra-medium`, `claude-opus-5.5-medium`, `claude-haiku-5.5-medium`), and set the effort with the reasoning level. A bare id such as `gpt-6.1-terra` is not in the catalog and the thread silently falls back to `auto`. A `-standard` id runs the 200k tier. The bare ids in `~/.copilot/agents/*.agent.md` front matter are Copilot's own and stay bare.
+
+The reviewer tools are view, grep, glob, skill, bash, and powershell. Its shell is only for `bb thread tell`, `bb thread wait`, `bb thread output`, `bb status`, and read-only git and diff commands. It does not edit. The Copilot orchestrator spawns this agent by name. The BB `spawn` tool with name `review` sets provider `acp-github-copilot-cli`, model `claude-opus-5.5-medium`, reasoning level `medium`, and `--option agent=reviewer`.
 
 ## Claude Code (`claude-code`)
 
@@ -97,6 +99,6 @@ Spawn the review with the `spawn` tool, name `review`, and `worker` set to the c
 Explore, plan, and implement with models from that provider's live catalog. Do not invent a model id. Follow the review rule: the reviewer's family must differ from the worker's.
 
 - Worker is not Gemini: review with Gemini 4 Argon, through the `spawn` tool with name `review` as in Claude Code.
-- Worker is Gemini, for example on Antigravity: the `spawn` tool with name `review` on an Antigravity parent uses the Copilot reviewer persona (provider `acp-github-copilot-cli`, model `claude-opus-5.5`, reasoning level `medium`, `agent=reviewer`). Do not pass `--option agent=reviewer` yourself.
+- Worker is Gemini, for example on Antigravity: the `spawn` tool with name `review` on an Antigravity parent uses the Copilot reviewer persona (provider `acp-github-copilot-cli`, model `claude-opus-5.5-medium`, reasoning level `medium`, `agent=reviewer`). Do not pass `--option agent=reviewer` yourself.
 
 The `spawn` tool maps `review` for Claude Code, GitHub Copilot, Cursor, and Antigravity parents. For any other parent, `spawn review` runs on the parent's own provider, which is the worker's family, so do not use it for review. Use `bb thread spawn` with the provider and options above, pass `--parent-self`, `--permission-mode full`, and `--parent-notifications stuck`, and write the loop protocol into the prompt yourself: the `REVIEW round` message to the worker, the two-round limit, and the `CLEAN` and `ESCALATE` endings. Say in the report that you did this.
