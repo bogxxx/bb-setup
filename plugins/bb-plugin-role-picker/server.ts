@@ -251,8 +251,11 @@ export default async function plugin(bb: BbPluginApi) {
     const instructions = saved
       ? procedure(context.provider.id, saved)
       : "No role is saved on this thread yet. Call role_choice and follow what it returns. Regular does the work in this session. Orchestrator delegates.";
+    // The tool list is fixed when the provider session is built, but the role can be saved
+    // later (first dispatch, or a Role switch mid-session). Always expose spawn; execute()
+    // refuses it unless the live role is orchestrator.
     return {
-      tools: saved === "orchestrator" ? ["role_choice", "spawn"] : ["role_choice"],
+      tools: ["role_choice", "spawn"],
       skills: ["role-picker"],
       instructions,
     };
