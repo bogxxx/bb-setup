@@ -55,17 +55,25 @@ Delegate to the planner before a non-trivial worker assignment. Then give the wo
 
 Do not review the diff yourself. Do not ask Opus or Haiku to review it.
 
-Inside a BB thread, write the review request to a file and spawn Gemini 4 Argon. Confirmed on this machine: provider `acp-antigravity`, model `gemini-4-argon`, reasoning level `medium`. Do not pass `agent=reviewer`. That Copilot agent is Opus 5.5.
+Review runs as a loop between the reviewer and the worker that wrote the change. The worker keeps its context, so it fixes the findings without a fresh start. Do not spawn a new worker to fix findings.
 
-```powershell
-bb thread spawn --project $env:BB_PROJECT_ID --parent-self --environment $env:BB_ENVIRONMENT_ID --provider acp-antigravity --model gemini-4-argon --reasoning-level medium --permission-mode full --title "Review" --prompt-file <absolute-path>
-```
+1. Spawn `contribute` with the `spawn` tool and wait for its report.
+2. Spawn `review` with the `spawn` tool, and set `worker` to the contribute thread id. Do not use `bb thread spawn` for the review. The tool picks Gemini 4 Argon (provider `acp-antigravity`, model `gemini-4-argon`, reasoning level `medium`) and sends the loop protocol with the reviewer's prompt. Do not pass `agent=reviewer`: that Copilot agent is Opus 5.5.
+3. Wait on the reviewer only: `bb thread wait <reviewer>`, then `bb thread output <reviewer>`. Do not wait on the worker for the review.
+   - `CLEAN`: the review passed. Continue to the acceptance checks.
+   - `ESCALATE` with findings: the reviewer already used its two rounds. Decide what to do next. Tell the same worker with `bb thread tell <worker> --mode auto --message-file -`, or ask the user if the decision is theirs.
 
-The prompt must include the requirements, the governing constraints, the paths or diff to inspect, and a read-only instruction: report defects, do not edit, do not run tests. Wait with `bb thread wait <id>` because the review gates completion. Allow at most two worker fix rounds, then report what remains.
+The reviewer sends defects to the worker itself, so you see only the final report. The assignment you give the reviewer carries the requirements, the governing constraints, the paths or diff to inspect, and the read-only rule: report defects, do not edit, do not run tests.
 
-Inside Cursor, delegate the review to `cantrip-review` instead. Leave its model pin as `muse-wonder[effort=medium,fast=false]`. Do not spawn a BB Cursor thread with `--model muse-wonder`; the Cursor provider catalog on this machine does not list that id.
+Messaging exception: the bb guide forbids messaging other threads unless the user asks. The user authorized this loop only. The reviewer may message the worker it reviews, and the worker may reply to that reviewer. You send no other thread messages.
+
+Inside Cursor, the review is `cantrip-review`, and the loop works the same way through the Cursor orchestrator. Leave its model pin as `muse-wonder[effort=medium,fast=false]`. Do not spawn a BB Cursor thread with `--model muse-wonder`; the Cursor provider catalog on this machine does not list that id.
 
 If neither review path is available, say the review did not run. Do not fill the gap with a Claude model.
+
+## In-process fallback
+
+If you run in-process (Agent tool subagents, with no BB `spawn` tool), subagents cannot message their siblings. You are the relay. Pass the reviewer's findings to the same worker with SendMessage, which resumes it with its transcript. Do not start a new worker. Send the worker's `FIXED round N` or `BLOCKED` reply back to the reviewer for re-review, at most two rounds. Then report what remains.
 
 ## Archgate
 

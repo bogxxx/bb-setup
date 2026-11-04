@@ -21,6 +21,24 @@ The reviewer is always a different model family from the worker that wrote the c
 | GitHub Copilot | GPT 6.1 Terra | Claude Opus 5.5 (`reviewer`) |
 | Claude Code | Claude Haiku 5.5 | Gemini 4 Argon (Antigravity) |
 
+## Review loop (every provider)
+
+The reviewer and the worker fix defects together. The reviewer does not report each defect to the orchestrator. The orchestrator does this:
+
+1. Spawn `contribute` (the worker), then wait for its report: `bb thread wait <worker>`, then `bb thread output <worker>`.
+2. Spawn `review` with `worker` set to the worker's thread id. The spawn tool picks the reviewer and its model for the provider, and it appends the loop protocol to the reviewer's prompt.
+3. Wait on the reviewer alone: `bb thread wait <reviewer>`, then read `bb thread output <reviewer>`.
+   - `CLEAN`: the review passed. Run the acceptance checks.
+   - `ESCALATE` plus findings: decide what to do next. Tell the same worker, or ask the user.
+
+Inside the loop, the reviewer checks the worker's diff. If there are defects, it sends them to the worker in `REVIEW round N/2 from thread:<reviewer id>`. The worker fixes only those findings, runs its checks, and replies `FIXED round N` (or `BLOCKED`) to the reviewer. The worker keeps its context, so it does not start over. The reviewer re-reviews. After round 2, if findings remain, it ends with `ESCALATE`.
+
+The spawn tool sets `parentNotifications: stuck` on `contribute` and `review`, so the orchestrator reads their reports with `bb thread wait` and `bb thread output`. `explore` and `plan` are unchanged.
+
+Messaging exception: the bb guide forbids messaging other threads unless the user asks. The user authorized this loop only: a reviewer may message the worker it reviews, and the worker may reply to that reviewer. No other thread-to-thread messages.
+
+In-process subagents cannot reach a sibling. That covers the Claude Agent tool, Copilot `task`, and Cursor `Task`. There the orchestrator is the relay. It passes the reviewer's findings to the same worker with SendMessage (Claude) or `write_agent` (Copilot), which resumes that worker with its transcript. It does not spawn a new worker to fix. It sends the fix back to the reviewer, for at most two rounds. On Cursor, if a Task subagent cannot be resumed, say so and ask the user.
+
 ## Cursor (`acp-cursor`)
 
 Orchestrator: `~/.cursor/agents/cantrip-goal.md`. It spawns `cantrip-explore`, `cantrip-plan`, `cantrip-implement`, and `cantrip-review`.
@@ -49,7 +67,7 @@ Confirmed catalog ids:
 | worker | `gpt-6.1-terra` | medium |
 | reviewer | `claude-opus-5.5` | medium |
 
-The reviewer tools are view, grep, glob, and skill. It has no shell. The Copilot orchestrator spawns this agent by name. A BB spawn of the same persona sets all three of provider `acp-github-copilot-cli`, model `claude-opus-5.5`, and reasoning level `medium`, plus `--option agent=reviewer`.
+The reviewer tools are view, grep, glob, skill, bash, and powershell. Its shell is only for `bb thread tell`, `bb thread wait`, `bb thread output`, `bb status`, and read-only git and diff commands. It does not edit. The Copilot orchestrator spawns this agent by name. The BB `spawn` tool with name `review` sets provider `acp-github-copilot-cli`, model `claude-opus-5.5`, reasoning level `medium`, and `--option agent=reviewer`.
 
 ## Claude Code (`claude-code`)
 
@@ -66,16 +84,13 @@ Confirmed catalog ids, effort `medium`:
 
 Opus and Haiku do not review Claude work. The review is Gemini 4 Argon (`gemini-4-argon` on Antigravity, provider `acp-antigravity`), or `cantrip-review` when the session is Cursor.
 
-```powershell
-bb thread spawn --project $env:BB_PROJECT_ID --parent-self --environment $env:BB_ENVIRONMENT_ID --provider acp-antigravity --model gemini-4-argon --reasoning-level medium --permission-mode full --title "Review" --prompt-file <absolute-path>
-bb thread wait <thread-id>
-```
-
-Do not pass `--option agent=reviewer` on this spawn. That option is a Copilot persona, which runs Opus 5.5, and Antigravity reports no session options. The prompt must tell Argon to review and not edit. Wait for it, because the review gates completion. Allow at most two fix rounds.
+Spawn the review with the `spawn` tool, name `review`, and `worker` set to the contribute thread id. The tool sets provider `acp-antigravity`, model `gemini-4-argon`, and reasoning level `medium`. Do not pass `--option agent=reviewer` (that is the Copilot persona, Opus 5.5), and do not run `bb thread spawn` for the review, because that skips the loop protocol. Allow at most two fix rounds (see Review loop).
 
 ## Any other provider
 
 Explore, plan, and implement with models from that provider's live catalog. Do not invent a model id. Follow the review rule: the reviewer's family must differ from the worker's.
 
-- Worker is not Gemini: review with Gemini 4 Argon. Use provider `acp-antigravity`, model `gemini-4-argon` and reasoning level `medium`, with the same spawn as Claude Code. Do not pass `--option agent=reviewer`.
+- Worker is not Gemini: review with Gemini 4 Argon, through the `spawn` tool with name `review` as in Claude Code.
 - Worker is Gemini, for example on Antigravity: review with the Copilot reviewer persona. Use provider `acp-github-copilot-cli`, model `claude-opus-5.5`, reasoning level `medium` and `--option agent=reviewer`.
+
+The spawn tool maps `review` only for Claude Code, GitHub Copilot, and Cursor parents. For any other parent it does not pick the reviewer for you. For that case, use `bb thread spawn` with the provider and options above, and write the loop protocol into its prompt yourself: the `REVIEW round` message to the worker, the two-round limit, and the `CLEAN` and `ESCALATE` endings. Say in the report that the tool did not choose it.

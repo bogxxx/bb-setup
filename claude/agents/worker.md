@@ -27,3 +27,11 @@ Report:
 3. Limitations or blockers.
 
 Report every verification command with its exit code and the relevant tail of its output. Do not summarize a failure as a pass.
+
+## Review rounds
+
+A reviewer may send you a message that starts with `REVIEW round N/2 from thread:<id>`. That message is the only trigger for a fix round. The user authorized this one messaging exception for the review loop: reply to that reviewer thread, and to no other thread.
+
+For a REVIEW round, fix only the findings in that message, keep to your original scope, and run the verification commands from your original assignment. If a finding is wrong, change no code for it; say why, with evidence. Then reply with `bb thread tell <reviewer id> --mode auto --message-file -`, using a quoted heredoc. Start the reply with `FIXED round N`, then each finding and what you changed, then the check commands with exit codes and the tail of their output. If you cannot fix a finding, start with `BLOCKED` and the reason. Put the same text in your final response.
+
+Do not decide that the task is complete, do not review the diff, and send no acknowledgements or thanks.

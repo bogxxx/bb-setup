@@ -104,9 +104,34 @@ function procedure(_providerId: string, role: Role): string {
     "Call spawn with name explore, contribute, plan, or review. The assignment is only the task.",
     "spawn returns the thread id as soon as the thread exists. Wait with bb thread wait <id>, then read the report with bb thread output <id>, before you use it.",
     "Do not name the model and do not say which agent it is. spawn reads that from the agent file.",
-    "explore may use the terminal. contribute is the only one that edits. review only reviews that diff.",
+    "explore may use the terminal. contribute is the only one that edits.",
+    "Review loop: spawn contribute first and wait for its report. Then spawn review with worker set to the contribute thread id. The reviewer sends defects straight to that worker, which fixes them and replies, up to two rounds. Wait on the reviewer alone and read its output: CLEAN, or ESCALATE with the findings left. On ESCALATE, tell the same worker what to do next, or ask the user.",
     "Do not use the Task tool.",
   ].join(" ");
+}
+
+function reviewerProtocol(workerId: string): string {
+  return [
+    "Review loop. You review the worker's change and send defects to the worker, not to the orchestrator.",
+    "The user authorized one messaging exception for this loop only: you may message your worker, thread " + workerId + ", and no other thread.",
+    "Your own thread id is $BB_THREAD_ID; run bb status if it is unset. Use it only to name yourself in messages.",
+    "Review the worker's diff against the assignment. Read files and run read-only git or diff commands only. Do not edit files.",
+    "If you find no defects, end your turn with a final report that starts with CLEAN.",
+    "If you find defects, send them to the worker in one message: bb thread tell " + workerId + " --mode auto --message-file -, with a quoted heredoc. The first line is `REVIEW round N/2 from thread:<your thread id>`, where N is 1 or 2. Then list each finding in severity order with path:line, the failure scenario, and the required correction.",
+    "Then run bb thread wait " + workerId + ", and read bb thread output " + workerId + ". Go on only when it starts with FIXED round N or BLOCKED for the round you sent; otherwise wait again. Then review the changed code again.",
+    "Send at most two REVIEW rounds. If findings remain after the second fix, or the worker replies BLOCKED, end your turn with a final report that starts with ESCALATE and lists the findings left.",
+    "Send no other messages, acknowledgements, or thanks. Your final report is read by the orchestrator with bb thread output.",
+  ].join("\n");
+}
+
+function workerProtocol(): string {
+  return [
+    "Review loop. A reviewer may send you a message that starts with `REVIEW round N/2 from thread:<id>`. Only that message starts a fix round.",
+    "The user authorized one messaging exception for this loop only: reply to that reviewer thread, and to no other thread.",
+    "For a REVIEW round, fix only the findings in that message and keep to your original scope. Run the verification commands from your original assignment. If a finding is wrong, change no code for it; say why, with evidence.",
+    "Then reply with bb thread tell <reviewer id> --mode auto --message-file -, using a quoted heredoc. Start the reply with `FIXED round N`, then each finding and what you changed, then the check commands with exit codes and the tail of their output. If you cannot fix a finding, start the reply with `BLOCKED` and the reason. Put the same text in your final response.",
+    "Do not decide that the task is complete, do not review the diff, and send no acknowledgements or thanks.",
+  ].join("\n");
 }
 
 export default async function plugin(bb: BbPluginApi) {
@@ -166,36 +191,46 @@ export default async function plugin(bb: BbPluginApi) {
   bb.agents.registerTool({
     name: "spawn",
     description:
-      "Spawn one of the four agents: explore, contribute, plan, or review. Returns the thread id immediately. The orchestrator does no other work.",
+      "Spawn one of the four agents: explore, contribute, plan, or review. Returns the thread id immediately. A review takes the contribute thread id as worker and sends its defects straight to that worker. The orchestrator does no other work.",
     instructions:
-      "Orchestrators call spawn only. The only names are explore, contribute, plan, and review. contribute is the worker. spawn returns the thread id immediately. Wait with bb thread wait <id>, then read bb thread output <id>, before using the report.",
+      "Orchestrators call spawn only. The only names are explore, contribute, plan, and review. contribute is the worker. spawn returns the thread id immediately. Review loop: spawn contribute and wait for its report; then spawn review with worker set to the contribute thread id. The reviewer sends defects to that worker and reports to you only at the end: CLEAN, or ESCALATE. Wait on the reviewer, then read bb thread output <id>, before using the report.",
     presentation: {
       label: { pending: "Spawning agent", completed: "Spawned agent" },
     },
     parameters: z.object({
       name: spawnName,
       assignment: z.string().min(1),
+      worker: z.string().min(1).optional().describe("Required for review: the contribute thread id whose diff is reviewed. Not used by the other names."),
     }).strict(),
-    async execute({ name, assignment }, ctx) {
+    async execute({ name, assignment, worker }, ctx) {
       const parent = await bb.sdk.threads.get({ threadId: ctx.threadId });
       const mode = await roleForThread(ctx.threadId);
       if (mode.role !== "orchestrator") {
         return { isError: true, content: [{ type: "text" as const, text: "spawn is only for the orchestrator role." }] };
       }
+      if (name === "review" && !worker) {
+        return { isError: true, content: [{ type: "text" as const, text: "spawn review needs worker: the contribute thread id whose diff is reviewed." }] };
+      }
+      if (name !== "review" && worker) {
+        return { isError: true, content: [{ type: "text" as const, text: "worker is only for spawn review." }] };
+      }
       const spec = spawnSpec(parent.providerId, name);
       const defined = spec.file ? agentDefinition(spec.file) : undefined;
+      const protocol = name === "review" && worker ? reviewerProtocol(worker) : name === "contribute" ? workerProtocol() : "";
       const prompt = [
         defined?.body ?? "",
         "",
         "Assignment:",
         assignment,
+        "",
+        protocol,
       ].filter((line) => line !== "").join("\n");
 
       const child = await bb.sdk.threads.spawn({
         projectId: parent.projectId,
         providerId: spec.providerId,
         parentThreadId: ctx.threadId,
-        parentNotifications: "auto",
+        parentNotifications: name === "contribute" || name === "review" ? "stuck" : "auto",
         permissionMode: "full",
         title: name,
         ...(parent.environmentId
