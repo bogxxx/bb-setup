@@ -2,12 +2,16 @@
 // report as an earlier release printed it, and a kind of attention it does
 // not know, as the menu bar app's checks do.
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { attentionWords, limitingWindows, matrixView, millions, shown, tokenLabel } from "../src/format";
+import { attentionWords, limitingWindows, matrixView, shown, tokenLabel, tokensM } from "../src/format";
 import { readReport, SchemaError } from "../src/report";
 
-const demo = (name: string) => JSON.parse(readFileSync(path.join(import.meta.dir, "../../docs/demo", name), "utf8"));
+// The repository demo reports sit beside the plugin only in the monorepo. The vendored copy
+// bundles the example team, so the other reports are tested where docs/ exists.
+const REPO_DEMO = path.join(import.meta.dir, "../../docs/demo");
+const HAS_REPO_DEMO = existsSync(REPO_DEMO);
+const demo = (name: string) => JSON.parse(readFileSync(path.join(HAS_REPO_DEMO ? REPO_DEMO : path.join(import.meta.dir, "../demo"), name), "utf8"));
 
 /** Removes the fields ai-usage added within schema 4, as a report of v0.3.4 has none of them. */
 const ADDED = new Set([
@@ -20,7 +24,7 @@ function strip(v: unknown): unknown {
   return Object.fromEntries(Object.entries(v).filter(([k]) => !ADDED.has(k)).map(([k, x]) => [k, strip(x)]));
 }
 
-describe.each(["team.json", "solo.json", "homebrew.json"])("%s", (name) => {
+describe.each(HAS_REPO_DEMO ? ["team.json", "solo.json", "homebrew.json"] : ["team.json"])("%s", (name) => {
   const raw = demo(name);
   const r = readReport(raw);
 
@@ -41,12 +45,12 @@ describe.each(["team.json", "solo.json", "homebrew.json"])("%s", (name) => {
   test("the matrix's totals are the report's", () => {
     const m = matrixView(r, "7d");
     expect(m.rows.length).toBe(raw.team.matrix.rows.length);
-    raw.team.matrix.columns.forEach((c: { burn: Record<string, number> }, i: number) => expect(m.columns[i]!.total).toBe(millions(c.burn["7d"]!)));
+    raw.team.matrix.columns.forEach((c: { burn: Record<string, number> }, i: number) => expect(m.columns[i]!.total).toBe(tokensM(c.burn["7d"]!)));
     expect(tokenLabel(r)).toBe("weighted tokens");
   });
 });
 
-test("a total with an estimated row in it is an estimate, as the app's", () => {
+test.skipIf(!HAS_REPO_DEMO)("a total with an estimated row in it is an estimate, as the app's", () => {
   const r = readReport(demo("team.json"));
   const estimated = r.team.matrix.rows.filter((row) => row.burn_estimated).map((row) => row.device);
   expect(estimated.length).toBeGreaterThan(0);
@@ -57,7 +61,7 @@ test("a total with an estimated row in it is an estimate, as the app's", () => {
   expect(matrixView(sure, "7d").total.startsWith("~")).toBe(false);
 });
 
-test("the example team the plugin bundles is the repository's", () => {
+test.skipIf(!HAS_REPO_DEMO)("the example team the plugin bundles is the repository's", () => {
   expect(readFileSync(path.join(import.meta.dir, "../demo/team.json"), "utf8")).toBe(readFileSync(path.join(import.meta.dir, "../../docs/demo/team.json"), "utf8"));
 });
 
@@ -69,7 +73,7 @@ test("a report of an earlier release reads its missing fields as the app does", 
   expect(r.cost).toBeNull();
   expect(r.team.today_local).toBe(false);
   expect(r.team.devices.every((d) => d.name === "" && d.note === null && d.pooled.length === 0)).toBe(true);
-  expect(tokenLabel(r)).toBe("tokens in+out");
+  expect(tokenLabel(r)).toBe("tokens, including input, output, cache, and reasoning");
   const row = r.team.matrix.rows[0]!;
   expect(shown(row)).toEqual(row.usage);
   // Without `limits`, only the main window limits an account.

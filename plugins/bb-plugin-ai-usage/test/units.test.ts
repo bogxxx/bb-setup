@@ -3,6 +3,9 @@ import { experimental_sanitizeInheritedChildProcessEnv as sanitize } from "@get-
 import { allowed } from "../src/args";
 import { candidates, cleanEnv, standardDirs } from "../src/env";
 import { inviteMessage } from "../src/invite";
+
+// These check POSIX PATH and shell behaviour; on Windows the separator and folders differ.
+const posix = process.platform === "win32" ? test.skip : test;
 import { BusyError, Jobs } from "../src/jobs";
 import { errorMessage, redact } from "../src/message";
 import { autoInstallable, installRefusal, phaseOf, type HostFacts } from "../src/phase";
@@ -22,7 +25,7 @@ describe("cleanEnv", () => {
   };
   const out = cleanEnv(env, sanitize);
 
-  test("drops BB's variables and its folders from PATH", () => {
+  posix("drops BB's variables and its folders from PATH", () => {
     expect(out.BB_CLI).toBeUndefined();
     expect(out.BB_SERVER_URL).toBeUndefined();
     expect(out.NODE_ENV).toBeUndefined();
@@ -35,11 +38,11 @@ describe("cleanEnv", () => {
     expect(out.HOME).toBe("/home/user");
   });
 
-  test("an empty PATH gets the system's", () => {
+  posix("an empty PATH gets the system's", () => {
     expect(cleanEnv({ PATH: "/home/user/.bb/bin", BB_CLI: "/home/user/.bb/bin/bb" }, sanitize).PATH).toBe("/usr/bin:/bin:/usr/sbin:/sbin");
   });
 
-  test("looks on PATH first, then the standard folders, each once", () => {
+  posix("looks on PATH first, then the standard folders, each once", () => {
     expect(candidates({ PATH: "/usr/bin:relative:/home/user/.local/bin" }, standardDirs("/home/user"))).toEqual([
       "/usr/bin/ai-usage",
       "/home/user/.local/bin/ai-usage",
@@ -141,7 +144,7 @@ describe("phases", () => {
     expect(phaseOf(facts({ host: null }))).toBe("no-host");
     expect(phaseOf(facts({ host: { status: "disconnected", type: "persistent" } }))).toBe("offline");
     expect(phaseOf(facts({ probe: null }))).toBe("loading");
-    expect(phaseOf(facts({ probe: probe({ platform: "win32" }) }))).toBe("unsupported");
+    expect(phaseOf(facts({ probe: probe({ platform: "win32" }) }))).toBe("ready");
     expect(phaseOf(facts({ probe: probe({ bin: null }), report: null }))).toBe("absent");
     expect(phaseOf(facts({ probe: probe({ bin: null }), job: job("running") }))).toBe("installing");
     expect(phaseOf(facts({ probe: probe({ bin: null }), job: job("failed") }))).toBe("install-failed");

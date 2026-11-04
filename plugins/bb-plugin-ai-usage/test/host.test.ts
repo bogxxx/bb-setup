@@ -6,6 +6,9 @@ import os from "node:os";
 import path from "node:path";
 import { install, probe, runCommand, type Machine } from "../src/host-impl";
 
+// These run fake POSIX shell binaries; they do not run on Windows.
+const posix = process.platform === "win32" ? test.skip : test;
+
 let home: string;
 let calls: string;
 
@@ -76,7 +79,7 @@ describe("probe", () => {
     rmSync(agents, { recursive: true });
   });
 
-  test("takes the binary a launch agent runs from outside PATH, but never another program", async () => {
+  posix("takes the binary a launch agent runs from outside PATH, but never another program", async () => {
     const agents = path.join(home, "Library/LaunchAgents");
     mkdirSync(agents, { recursive: true });
     writeFileSync(path.join(agents, "io.github.neoromantic.ai-usage.plist"), "<plist/>");
@@ -99,7 +102,7 @@ describe("probe", () => {
     rmSync(path.join(home, "fakebin/plutil"));
   });
 
-  test("an older release is not asked for status, which made a team key before v0.11.0", async () => {
+  posix("an older release is not asked for status, which made a team key before v0.11.0", async () => {
     fake(path.join(home, ".local/bin/ai-usage"), "v0.10.2", "{}");
     writeFileSync(calls, "");
     const p = await probe(machine(linux));
@@ -109,7 +112,7 @@ describe("probe", () => {
     expect(readFileSync(calls, "utf8")).not.toContain(" status ");
   });
 
-  test("runs the copy the scheduler runs, with its state folder", async () => {
+  posix("runs the copy the scheduler runs, with its state folder", async () => {
     const scheduled = path.join(home, "opt/ai-usage/bin/ai-usage");
     const state = path.join(home, "state");
     const status = JSON.stringify({ schema_version: 4, collector: null, sources: [], install: { version: "v0.11.0", method: "self", home: state, collected: true, schedule: { state: "other", program: scheduled, home: state, error: null } } });
@@ -126,7 +129,7 @@ describe("probe", () => {
 });
 
 describe("run", () => {
-  test("passes the key on standard input and refuses other commands", async () => {
+  posix("passes the key on standard input and refuses other commands", async () => {
     const bin = path.join(home, ".local/bin/ai-usage");
     const out = await runCommand(machine(linux), { bin, aiHome: null, args: ["team", "join"], stdin: "aiu-team-1:AAEC\n", json: false, timeoutMs: 10_000 });
     expect(out.code).toBe(0);
@@ -135,7 +138,7 @@ describe("run", () => {
     await expect(runCommand(machine(linux), { bin: "/bin/sh", aiHome: null, args: ["version"], stdin: null, json: false, timeoutMs: 10_000 })).rejects.toThrow();
   });
 
-  test("says ai-usage's own error", async () => {
+  posix("says ai-usage's own error", async () => {
     const out = await runCommand(machine(linux), { bin: path.join(home, ".local/bin/ai-usage"), aiHome: null, args: ["report", "--json"], stdin: null, json: true, timeoutMs: 10_000 });
     expect(out.code).toBe(1);
     expect(out.json).toBeNull();
@@ -144,7 +147,7 @@ describe("run", () => {
 });
 
 describe("install", () => {
-  test("runs install.sh of the latest release, pinned to it, without the app or shell profiles, with the key only in its environment", async () => {
+  posix("runs install.sh of the latest release, pinned to it, without the app or shell profiles, with the key only in its environment", async () => {
     const script = `#!/bin/sh
 echo "ai-usage install: url=$AI_USAGE_DOWNLOAD_URL app=$AI_USAGE_NO_APP path=$AI_USAGE_NO_MODIFY_PATH relay=$AI_USAGE_RELAY caller=$AI_USAGE_CALLER" >&2
 echo "ai-usage install: key=$AI_USAGE_TEAM_KEY" >&2
@@ -172,7 +175,7 @@ echo "REPORT that stays out of the log"
     expect(log).not.toContain("REPORT");
   });
 
-  test("a failed install says the installer's error", async () => {
+  posix("a failed install says the installer's error", async () => {
     const fetchFake = (async (url: string | URL | Request) =>
       String(url).endsWith("/latest")
         ? new Response(null, { status: 302, headers: { location: "https://github.com/neoromantic/ai-usage/releases/tag/v0.11.0" } })
