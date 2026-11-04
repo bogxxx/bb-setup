@@ -8,6 +8,8 @@ On GitHub Copilot, the reviewer agent is Opus 5.5 (`claude-opus-5.5`). On Claude
 
 Review is a loop: the reviewer sends defects straight to the worker that wrote the change, and reports to the orchestrator only at the end (`CLEAN` or `ESCALATE`). The user authorized that messaging exception for this loop only; it does not extend to other threads.
 
+Any `bb thread spawn` an agent runs passes `--permission-mode full`, and `--parent-self` unless the thread is meant to be top-level, so spawned threads never fall back to the auto or accept-edits default.
+
 # BB setup repo
 
 This bb's setup is tracked in GitHub `bogxxx/bb-setup`, cloned at `C:\Users\krech\src\bb-setup` on Windows and `~/src/bb-setup` on macOS. If the clone is missing on a host, clone it with the `bogxxx` gh account (`gh auth token --user bogxxx`); do not switch the active gh account, because bb's Copilot integration depends on it. It holds the user's own plugins (`plugins/`, which bb runs from there), user skills, `~/.bb/AGENTS.md`, `~/.claude/CLAUDE.md` and `~/.claude/agents`, the installed plugin list, and non-default plugin settings.
