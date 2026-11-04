@@ -1,6 +1,9 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { SHIPPED_AGENTS } from "./agents.generated.js";
 
 const roleSchema = z.enum(["regular", "orchestrator"]);
 type Role = z.infer<typeof roleSchema>;
@@ -34,30 +37,36 @@ function readRole(value: unknown): Role | null {
 
 type SpawnName = "explore" | "contribute" | "plan" | "review";
 
+/** An agent file: the folder under the user's home and the file's name there. */
+interface AgentRef {
+  dir: ".claude" | ".cursor";
+  name: string;
+}
+
 function spawnSpec(parentProviderId: string, name: SpawnName): {
   providerId: string;
   model?: string;
   reasoningLevel?: string;
   sessionOptions?: Record<string, string>;
-  file?: string;
+  agent?: AgentRef;
 } {
   if (parentProviderId === "acp-cursor") {
-    const file = {
-      explore: "C:\\Users\\krech\\.cursor\\agents\\cantrip-explore.md",
-      contribute: "C:\\Users\\krech\\.cursor\\agents\\cantrip-implement.md",
-      plan: "C:\\Users\\krech\\.cursor\\agents\\cantrip-plan.md",
-      review: "C:\\Users\\krech\\.cursor\\agents\\cantrip-review.md",
+    const agent = {
+      explore: "cantrip-explore.md",
+      contribute: "cantrip-implement.md",
+      plan: "cantrip-plan.md",
+      review: "cantrip-review.md",
     }[name];
-    return { providerId: "acp-cursor", file };
+    return { providerId: "acp-cursor", agent: { dir: ".cursor", name: agent } };
   }
   if (parentProviderId === "claude-code") {
     if (name === "review") {
       return { providerId: "acp-antigravity", model: "gemini-4-argon", reasoningLevel: "medium" };
     }
     const claude = {
-      explore: { model: "claude-haiku-5-5", file: "C:\\Users\\krech\\.claude\\agents\\explorer.md" },
-      contribute: { model: "claude-haiku-5-5", file: "C:\\Users\\krech\\.claude\\agents\\worker.md" },
-      plan: { model: "claude-opus-5-5", file: "C:\\Users\\krech\\.claude\\agents\\planner.md" },
+      explore: { model: "claude-haiku-5-5", agent: { dir: ".claude" as const, name: "explorer.md" } },
+      contribute: { model: "claude-haiku-5-5", agent: { dir: ".claude" as const, name: "worker.md" } },
+      plan: { model: "claude-opus-5-5", agent: { dir: ".claude" as const, name: "planner.md" } },
     }[name];
     return { providerId: "claude-code", reasoningLevel: "medium", ...claude };
   }
@@ -77,8 +86,29 @@ function spawnSpec(parentProviderId: string, name: SpawnName): {
   return { providerId: parentProviderId };
 }
 
-function agentDefinition(file: string): { model?: string; reasoningLevel?: string; serviceTier?: string; body: string } {
-  const raw = readFileSync(file, "utf8");
+/**
+ * An agent's file, read in this order: the copy in the user's home on the machine
+ * the server runs on, then the copy shipped with this plugin (generated from the
+ * repo's agents). Neither: no body and a warning, so the spawn still goes ahead.
+ */
+function agentDefinition(
+  agent: AgentRef,
+  warn: (message: string) => void,
+): { model?: string; reasoningLevel?: string; serviceTier?: string; body: string } {
+  const local = path.join(os.homedir(), agent.dir, "agents", agent.name);
+  let raw: string | null = null;
+  if (existsSync(local)) {
+    try {
+      raw = readFileSync(local, "utf8");
+    } catch {
+      raw = null;
+    }
+  }
+  raw ??= SHIPPED_AGENTS[`${agent.dir}/agents/${agent.name}`] ?? null;
+  if (raw === null) {
+    warn(`agent file ${agent.dir}/agents/${agent.name} is not on this machine or in the plugin; spawning without its instructions`);
+    return { body: "" };
+  }
   const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
   const front = match?.[1] ?? "";
   const body = (match?.[2] ?? raw).trim();
@@ -234,7 +264,7 @@ export default async function plugin(bb: BbPluginApi) {
         if (!exists) return fail(`spawn review worker ${worker} was not found.`);
       }
       const spec = spawnSpec(parent.providerId, name);
-      const defined = spec.file ? agentDefinition(spec.file) : undefined;
+      const defined = spec.agent ? agentDefinition(spec.agent, (message) => bb.log.warn(message)) : undefined;
       const protocol = name === "review" ? reviewerProtocol(worker) : name === "contribute" ? workerProtocol() : "";
       const prompt = [
         defined?.body,

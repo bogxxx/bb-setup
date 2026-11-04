@@ -165,6 +165,8 @@ if [ "$PLUGINS" = 1 ]; then
 fi
 
 cd "$REPO"
+# role-picker ships the agent files it spawns with; generate them from claude/agents and cursor/agents.
+node "$(dirname "$0")/../plugins/bb-plugin-role-picker/scripts/gen-agents.mjs"
 git add -A
 if [ "$DRY" = 1 ]; then git status --short; exit 0; fi
 if [ -z "$(git status --porcelain)" ]; then echo "No changes."; exit 0; fi

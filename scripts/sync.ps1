@@ -78,6 +78,8 @@ Write-Host "  $($installed.Count) installed plugins, $($settings.Count) with cus
 # Git writes warnings (CRLF, push hints) to stderr; check exit codes instead of letting
 # 5.1 turn stderr into terminating errors.
 $ErrorActionPreference = 'Continue'
+Write-Host 'Agents:'
+node "$Repo\plugins\bb-plugin-role-picker\scripts\gen-agents.mjs"
 Push-Location $Repo
 try {
   git -c core.safecrlf=false add -A
