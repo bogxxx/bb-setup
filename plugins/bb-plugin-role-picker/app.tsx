@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { definePluginApp, useComposer, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
+import "./composer-footer.css";
 
 type Role = "regular" | "orchestrator";
 
@@ -28,11 +29,11 @@ function RoleSelect({ threadId }: { threadId: string | null }) {
   }, [load]);
 
   return (
-    <label className="flex h-7 items-center gap-1.5 text-xs text-muted-foreground">
+    <label className="flex h-6 items-center gap-1.5 text-xs text-muted-foreground">
       <span>Role</span>
       <select
         aria-label="Role"
-        className="h-7 max-w-36 rounded-md border border-border bg-background px-1.5 text-xs text-foreground"
+        className="h-6 max-w-36 rounded-md border border-border bg-background px-1.5 text-xs text-foreground"
         value={role}
         onChange={(event) => {
           const next = event.target.value === "orchestrator" ? "orchestrator" : "regular";
@@ -48,41 +49,96 @@ function RoleSelect({ threadId }: { threadId: string | null }) {
   );
 }
 
-function useSlotBesideModelPicker() {
+function composerShell(anchor: HTMLElement): Element | null {
+  return anchor.closest("[data-promptbox-shell]") ?? anchor.closest("[data-follow-up-composer]");
+}
+
+function directSlot(parent: Element): HTMLElement | null {
+  const host = parent.querySelector(":scope > [data-role-picker-slot]");
+  return host instanceof HTMLElement ? host : null;
+}
+
+function makeSlot(): HTMLDivElement {
+  const host = document.createElement("div");
+  host.setAttribute("data-role-picker-slot", "");
+  host.className = "flex shrink-0 items-center";
+  return host;
+}
+
+function modelRowFor(anchor: HTMLElement): HTMLElement | null {
+  const action = anchor.closest("[data-plugin-composer-action]");
+  const modelRow = action?.parentElement?.previousElementSibling;
+  if (!(modelRow instanceof HTMLElement) || !modelRow.hasAttribute("data-promptbox-expanded-only")) {
+    return null;
+  }
+  return modelRow;
+}
+
+function useRoleSlot() {
   const anchorRef = useRef<HTMLSpanElement>(null);
   const [slot, setSlot] = useState<HTMLElement | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const anchor = anchorRef.current;
     if (!anchor) return;
 
+    let owned: HTMLElement | null = null;
+    let cancelled = false;
+
+    const releaseOwned = () => {
+      owned?.remove();
+      owned = null;
+    };
+
+    const claim = (parent: Element, placeNode: (host: HTMLElement) => void): HTMLElement => {
+      const existing = directSlot(parent);
+      if (existing) {
+        if (owned && owned !== existing) releaseOwned();
+        owned = existing;
+        placeNode(existing);
+        return existing;
+      }
+      const host = owned ?? makeSlot();
+      placeNode(host);
+      owned = host;
+      return host;
+    };
+
     const place = () => {
+      if (cancelled) return;
       const action = anchor.closest("[data-plugin-composer-action]");
-      const voiceRow = action?.parentElement;
-      const modelRow = voiceRow?.previousElementSibling;
-      if (!(action instanceof HTMLElement) || !(modelRow instanceof HTMLElement) || !modelRow.hasAttribute("data-promptbox-expanded-only")) {
-        if (action instanceof HTMLElement) action.hidden = false;
-        setSlot((current) => (current === null ? current : null));
-        return;
+      const footer = composerShell(anchor)?.querySelector("[data-follow-up-composer-footer]");
+      const cluster = footer?.lastElementChild;
+      let host: HTMLElement | null = null;
+
+      if (cluster instanceof HTMLElement) {
+        host = claim(cluster, (node) => {
+          if (cluster.firstElementChild !== node) cluster.prepend(node);
+        });
+      } else {
+        const modelRow = modelRowFor(anchor);
+        if (modelRow) {
+          host = claim(modelRow, (node) => {
+            if (node.parentElement !== modelRow) modelRow.appendChild(node);
+          });
+        }
       }
 
-      let host = modelRow.querySelector(":scope > [data-role-picker-slot]");
-      if (!(host instanceof HTMLElement)) {
-        host = document.createElement("div");
-        host.setAttribute("data-role-picker-slot", "");
-        host.className = "flex shrink-0 items-center";
-        modelRow.appendChild(host);
-      }
-
-      action.hidden = true;
+      if (!host) releaseOwned();
+      if (action instanceof HTMLElement) action.hidden = host !== null;
       setSlot((current) => (current === host ? current : host));
     };
 
     place();
-    const shell = anchor.closest("[data-promptbox-shell]") ?? document.body;
     const observer = new MutationObserver(place);
-    observer.observe(shell, { childList: true, subtree: true });
-    return () => observer.disconnect();
+    observer.observe(composerShell(anchor) ?? document.body, { childList: true, subtree: true });
+    return () => {
+      cancelled = true;
+      observer.disconnect();
+      releaseOwned();
+      const action = anchor.closest("[data-plugin-composer-action]");
+      if (action instanceof HTMLElement) action.hidden = false;
+    };
   }, []);
 
   return { anchorRef, slot };
@@ -90,7 +146,7 @@ function useSlotBesideModelPicker() {
 
 function ComposerRole() {
   const composer = useComposer();
-  const { anchorRef, slot } = useSlotBesideModelPicker();
+  const { anchorRef, slot } = useRoleSlot();
   const control = <RoleSelect threadId={threadIdOf(composer.scope)} />;
   return (
     <>

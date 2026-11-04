@@ -1,0 +1,33 @@
+[data-follow-up-composer-footer] {
+  max-height: none !important;
+  height: auto !important;
+  overflow: visible !important;
+  flex-wrap: wrap !important;
+  align-items: center;
+  row-gap: 2px;
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+[data-follow-up-composer-footer] > :first-child {
+  flex: 1 1 18rem;
+  min-width: min(100%, 14rem);
+  max-width: 100%;
+}
+
+[data-follow-up-composer-footer] > :last-child {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin-left: auto;
+  max-width: 100%;
+  row-gap: 2px;
+}
+
+[data-follow-up-composer-footer] [data-option-display][title^="Project:"] {
+  max-width: min(28rem, 70vw) !important;
+}
+
+[data-promptbox-action-row] [data-promptbox-expanded-only] {
+  min-width: 0;
+  flex: 1 1 auto;
+}
