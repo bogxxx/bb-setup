@@ -26,7 +26,10 @@ import { delimiter, dirname, join } from "node:path";
 
 const IS_WINDOWS = process.platform === "win32";
 const GH_USER = process.env.COPILOT_GH_USER || "bohdan-krechko-akerbp";
-const CACHE = join(homedir(), ".cache", "bb-copilot-acp", "models-v2.txt");
+// COPILOT_GH_CONFIG_DIR points at a separate gh config dir (a second GitHub account, e.g. SopraSteria)
+// whose active token is used instead of the COPILOT_GH_USER account; it gets its own model cache.
+const GH_CONFIG_DIR = process.env.COPILOT_GH_CONFIG_DIR || "";
+const CACHE = join(homedir(), ".cache", "bb-copilot-acp", GH_CONFIG_DIR ? `models-v2-${process.env.COPILOT_PROFILE || "alt"}.txt` : "models-v2.txt");
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const EFFORTS = ["none", "low", "medium", "high", "xhigh", "max"];
 const WORDS = { none: "None", low: "Low", medium: "Medium", high: "High", xhigh: "Extra High", max: "Max" };
@@ -46,8 +49,9 @@ function copilotEnv() {
   const env = { ...process.env };
   for (const key of ["GH_TOKEN", "GITHUB_TOKEN", "COPILOT_GITHUB_TOKEN"]) delete env[key];
   let token = "";
+  if (GH_CONFIG_DIR) env.GH_CONFIG_DIR = GH_CONFIG_DIR;
   try {
-    token = execFileSync("gh", ["auth", "token", "--user", GH_USER], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env, windowsHide: true }).trim();
+    token = execFileSync("gh", GH_CONFIG_DIR ? ["auth", "token"] : ["auth", "token", "--user", GH_USER], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env, windowsHide: true }).trim();
   } catch {}
   if (token) env.COPILOT_GITHUB_TOKEN = env.GH_TOKEN = env.GITHUB_TOKEN = token;
   return env;
