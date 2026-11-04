@@ -120,7 +120,7 @@ Review is a loop between the reviewer and the worker that wrote the change. The 
 In a BB thread, where the `spawn` tool is available:
 
 1. Spawn `contribute` with `spawn` and wait for its report: `bb thread wait <worker>`, then `bb thread output <worker>`.
-2. Spawn `review` with `spawn`, and set `worker` to the contribute thread id. The tool runs the review on a provider other than Copilot (Claude Opus 5.5 first, then Gemini 4 Argon, then Codex on GPT 6.1 Sol) and sends the loop protocol with the reviewer's prompt. If a reviewer stops on its provider's quota, the tool spawns the next one and messages you the new thread id; wait on that one instead. The reviewer messages the worker itself, so you do not relay.
+2. Spawn `review` with `spawn`, and set `worker` to the contribute thread id. The review stays inside Copilot: the tool runs the Copilot `reviewer` agent on Opus 5.5, a different vendor from the GPT worker, and sends the loop protocol with the reviewer's prompt. Copilot work is never sent to another provider. If the reviewer stops on a quota, the tool messages you that no reviewer is left; ask the user. The reviewer messages the worker itself, so you do not relay.
 3. Wait on the reviewer only: `bb thread wait <reviewer>`, then `bb thread output <reviewer>`. `CLEAN` passes. `ESCALATE` means two rounds are used up or the worker is `BLOCKED`. Then tell the same worker what to do next, or ask the user.
 
 In-process, with `task` subagents (no BB `spawn`):

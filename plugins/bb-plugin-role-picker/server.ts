@@ -63,20 +63,25 @@ const REVIEWERS: Record<string, SpawnSpec> = {
 };
 
 // The reviewer chain for a worker on a provider, tried in order when one runs out of quota.
-// No entry runs on the worker's provider and no two entries share a provider.
+// No entry runs on the worker's provider and no two entries share a provider, except Copilot:
+// Copilot work stays inside Copilot and is reviewed there by another vendor's model
+// (a GPT worker gets Opus).
 // A Claude worker is never reviewed by a Claude model (Opus or Haiku). Everyone else gets
 // Opus 5.5 second, unless it is already first.
 const REVIEW_ORDER: Record<string, string[]> = {
   "claude-code": ["gemini", "copilot-sol", "cursor"],
-  "acp-github-copilot-cli": ["claude-opus", "gemini", "codex"],
+  "acp-github-copilot-cli": ["copilot-opus"],
   "acp-cursor": ["gemini", "claude-opus", "copilot-sol"],
   "acp-antigravity": ["copilot-opus", "codex", "claude-opus"],
   codex: ["gemini", "claude-opus", "copilot-sol"],
 };
 
+const SAME_PROVIDER_REVIEW = new Set(["acp-github-copilot-cli"]);
+
 function reviewChain(parentProviderId: string): string[] {
   const order = REVIEW_ORDER[parentProviderId] ?? ["gemini", "claude-opus", "codex"];
-  const seen = new Set<string>([parentProviderId]);
+  // Copilot reviews its own work on another vendor's model; everyone else leaves their provider.
+  const seen = new Set<string>(SAME_PROVIDER_REVIEW.has(parentProviderId) ? [] : [parentProviderId]);
   return order.filter((id) => {
     const providerId = REVIEWERS[id]?.providerId;
     if (!providerId || seen.has(providerId)) return false;
