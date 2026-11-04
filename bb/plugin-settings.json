@@ -1,6 +1,6 @@
 {
   "provider-acp": {
-    "customAgents": "[{\"id\":\"github-copilot-cli\",\"displayName\":\"GitHub Copilot\",\"command\":\"copilot-acp\",\"args\":[],\"env\":{},\"modelCli\":{\"listArgs\":[\"--list-models\"],\"selectFlag\":\"--model\",\"primaryModels\":[]}},{\"id\":\"antigravity\",\"displayName\":\"Gravity\",\"command\":\"agy\",\"args\":[\"acp\"],\"env\":{}}]"
+    "customAgents": "[{\"id\":\"github-copilot-cli\",\"displayName\":\"GitHub Copilot\",\"command\":\"copilot-acp\",\"args\":[],\"env\":{},\"modelCli\":{\"listArgs\":[\"--list-models\"],\"selectFlag\":\"--model\",\"primaryModels\":[]}},{\"id\":\"github-copilot-sopra\",\"displayName\":\"GitHub Copilot (SopraSteria)\",\"command\":\"copilot-acp-sopra\",\"args\":[],\"env\":{},\"modelCli\":{\"listArgs\":[\"--list-models\"],\"selectFlag\":\"--model\",\"primaryModels\":[]}},{\"id\":\"antigravity\",\"displayName\":\"Gravity\",\"command\":\"agy\",\"args\":[\"acp\"],\"env\":{}}]"
   },
   "push-notifications": {
     "childLevel": "muted"

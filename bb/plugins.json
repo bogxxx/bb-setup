@@ -18,11 +18,6 @@
       "subdirectory": "plugins/bb-plugin-ai-usage"
     },
     {
-      "id": "burn",
-      "source": "https://github.com/kalindudc/burn.git",
-      "enabled": true
-    },
-    {
       "id": "claude-subagents",
       "source": "https://github.com/bogxxx/bb-setup.git",
       "enabled": true,
