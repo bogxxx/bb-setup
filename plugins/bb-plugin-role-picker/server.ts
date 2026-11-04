@@ -106,6 +106,7 @@ function procedure(_providerId: string, role: Role): string {
   return [
     "You spawn only. Do not explore, plan, contribute, or review in this session.",
     "Call spawn with name explore, contribute, plan, or review. The assignment is only the task.",
+    "Planning is the default: spawn plan before any contribute. Skip it only when ALL hold: the change is small (about one file or a few lines), the request is unambiguous, the approach is obvious with no design choices, and no exploration is needed to know where or what to edit. State the skip in one line. When in doubt, plan. Multi-file changes, new features, refactors, bug fixes with an unknown root cause, and cross-component behavior always get a plan. Sequence: explore (if needed), plan, contribute, review.",
     "spawn returns the thread id as soon as the thread exists. Wait with bb thread wait <id>, then read the report with bb thread output <id>, before you use it.",
     "Do not name the model and do not say which agent it is. spawn reads that from the agent file.",
     "explore may use the terminal. contribute is the only one that edits.",
@@ -196,9 +197,9 @@ export default async function plugin(bb: BbPluginApi) {
   bb.agents.registerTool({
     name: "spawn",
     description:
-      "Spawn one of the four agents: explore, contribute, plan, or review. Returns the thread id immediately. A review takes the contribute thread id as worker and sends its defects straight to that worker. The orchestrator does no other work.",
+      "Spawn one of the four agents: explore, contribute, plan, or review. Plan before any contribute unless the change is small and obvious. Returns the thread id immediately. A review takes the contribute thread id as worker and sends its defects straight to that worker. The orchestrator does no other work.",
     instructions:
-      "Orchestrators call spawn only. The only names are explore, contribute, plan, and review. contribute is the worker. spawn returns the thread id immediately. Review loop: spawn contribute and wait for its report; then spawn review with worker set to the contribute thread id. The reviewer sends defects to that worker and reports to you only at the end: CLEAN, or ESCALATE. Wait on the reviewer, then read bb thread output <id>, before using the report.",
+      "Orchestrators call spawn only. The only names are explore, contribute, plan, and review. contribute is the worker. Planning is the default: spawn plan before contribute, and skip it only when the change is small, unambiguous, obvious, and needs no exploration (state the skip in one line). spawn returns the thread id immediately. Review loop: spawn contribute and wait for its report; then spawn review with worker set to the contribute thread id. The reviewer sends defects to that worker and reports to you only at the end: CLEAN, or ESCALATE. Wait on the reviewer, then read bb thread output <id>, before using the report.",
     presentation: {
       label: { pending: "Spawning agent", completed: "Spawned agent" },
     },

@@ -7,7 +7,13 @@ description: Route development work through the current provider's orchestrator,
 
 The composer Role control chooses regular or orchestrator. Call `role_choice` and follow it. Regular stays on this thread. Orchestrator follows the provider below.
 
-Detect the provider with `bb thread show $env:BB_THREAD_ID --json` and read `providerId`. The orchestrator file is the system prompt for that role. A lookup or one obvious one-line edit stays on the current thread.
+Detect the provider with `bb thread show $env:BB_THREAD_ID --json` and read `providerId`. The orchestrator file is the system prompt for that role. A lookup stays on the current thread.
+
+## Planning default (every provider)
+
+Planning is the default. Spawn the planner before any worker: the in-process `planner` agent, the Cursor `cantrip-plan`, or the BB `spawn` name `plan`. Sequence for non-trivial work: explore (if needed), plan, contribute, review loop.
+
+Skip the planner only when ALL of these hold: the change is small (about one file or a few lines); the request is unambiguous; the approach is obvious with no design choices; and no exploration is needed to know where or what to edit. State the skip in one line with the reason. When in doubt, plan. Multi-file changes, new features, refactors, bug fixes with an unknown root cause, and changes that touch behavior across components always get a plan.
 
 Model ids below were present in `bb provider models <provider> --environment env_chay9bmgz7` on this machine. Re-check the live catalog before spawning if the catalog may have changed. A spawn override sets provider, model, and reasoning level together. Omitting all three inherits the parent.
 

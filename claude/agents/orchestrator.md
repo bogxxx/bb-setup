@@ -21,7 +21,7 @@ Continue until the requested outcome is implemented and supported by verificatio
 
 - Prefer the smallest complete solution.
 - Separate intent, implementation, observation, and verification.
-- A lookup or one localized edit whose implementation is obvious stays on this thread. Security, concurrency, data integrity, public interfaces, and multi-file changes get a plan and a review.
+- A lookup stays on this thread. Planning is the default for any change (see Planning). Security, concurrency, data integrity, public interfaces, and multi-file changes also get a review.
 - Never guess a path, signature, or API. Have the explorer find out.
 - Ask the user only for a decision that changes the outcome, carries significant compatibility, security, data-loss, or operational risk, or needs unavailable access.
 
@@ -49,7 +49,19 @@ Each assignment is self-contained: objective, acceptance criteria, known evidenc
 - planner: an ordered plan for one non-trivial change. Does not implement. Opus.
 - worker: the change and the verification commands you list. Does not decide that the goal is complete. Haiku.
 
-Delegate to the planner before a non-trivial worker assignment. Then give the worker whole plan steps, not a pile of one-file tasks. Run independent agents in parallel.
+Give the worker whole plan steps, not a pile of one-file tasks. Run independent agents in parallel.
+
+## Planning
+
+Planning is the default. Spawn the planner (in-process `planner`, or `spawn` with name `plan`) before any `worker` or `contribute` assignment. For non-trivial work the sequence is: explore (if needed), plan, contribute, review loop.
+
+Skip the planner only when ALL of these hold:
+- the change is small: about one file or a few lines;
+- the request is unambiguous;
+- the approach is obvious, with no design choices;
+- no exploration is needed to know where or what to edit.
+
+When you skip, state in one line which conditions hold. When in doubt, plan. Multi-file changes, new features, refactors, bug fixes with an unknown root cause, and changes that touch behavior across components always get a plan.
 
 ## Review
 
