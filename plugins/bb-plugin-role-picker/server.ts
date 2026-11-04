@@ -202,12 +202,17 @@ export default async function plugin(bb: BbPluginApi) {
       assignment: z.string().min(1),
       worker: z.string().min(1).optional().describe("Required for review: the contribute thread id whose diff is reviewed. Not used by the other names."),
     }).strict(),
-    async execute({ name, assignment, worker }, ctx) {
+    async execute({ name, assignment, worker: workerParam }, ctx) {
       const parent = await bb.sdk.threads.get({ threadId: ctx.threadId });
       const mode = await roleForThread(ctx.threadId);
       if (mode.role !== "orchestrator") {
         return { isError: true, content: [{ type: "text" as const, text: "spawn is only for the orchestrator role." }] };
       }
+      // Fallback for sessions whose published schema predates the worker parameter: accept a
+      // first assignment line `worker: thr_xxx` when the parameter is missing.
+      const fallback = name === "review" && !workerParam ? assignment.match(/^worker:\s*(\S+)[ \t]*\r?\n/) : null;
+      const worker = workerParam ?? fallback?.[1];
+      if (fallback) assignment = assignment.slice(fallback[0].length);
       if (name === "review" && !worker) {
         return { isError: true, content: [{ type: "text" as const, text: "spawn review needs worker: the contribute thread id whose diff is reviewed." }] };
       }
