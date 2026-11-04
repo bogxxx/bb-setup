@@ -43,26 +43,55 @@ interface AgentRef {
   name: string;
 }
 
-function spawnSpec(parentProviderId: string, name: SpawnName): {
+type SpawnSpec = {
   providerId: string;
   model?: string;
   reasoningLevel?: string;
   sessionOptions?: Record<string, string>;
   agent?: AgentRef;
-} {
+};
+
+// Reviewers by id. Fallback order is per worker provider in REVIEW_ORDER.
+const REVIEWERS: Record<string, SpawnSpec> = {
+  gemini: { providerId: "acp-antigravity", model: "gemini-4-argon", reasoningLevel: "medium" },
+  "copilot-opus": { providerId: "acp-github-copilot-cli", model: "claude-opus-5.5", reasoningLevel: "medium", sessionOptions: { agent: "reviewer" } },
+  "copilot-gpt": { providerId: "acp-github-copilot-cli", model: "gpt-6.1-terra", reasoningLevel: "medium", sessionOptions: { agent: "reviewer" } },
+  "claude-opus": { providerId: "claude-code", model: "claude-opus-5-5", reasoningLevel: "medium" },
+  codex: { providerId: "codex", model: "gpt-6-luna", reasoningLevel: "medium" },
+};
+
+// The reviewer chain for a worker on a provider, tried in order when one runs out of quota.
+// No entry runs on the worker's provider and no two entries share a provider.
+// A Claude worker is never reviewed by a Claude model (Opus or Haiku).
+const REVIEW_ORDER: Record<string, string[]> = {
+  "claude-code": ["gemini", "codex", "copilot-gpt"],
+  "acp-github-copilot-cli": ["claude-opus", "gemini", "codex"],
+  "acp-cursor": ["gemini", "claude-opus", "codex"],
+  "acp-antigravity": ["copilot-opus", "codex", "claude-opus"],
+  codex: ["gemini", "claude-opus", "copilot-gpt"],
+};
+
+function reviewChain(parentProviderId: string): string[] {
+  const order = REVIEW_ORDER[parentProviderId] ?? ["gemini", "claude-opus", "codex"];
+  const seen = new Set<string>([parentProviderId]);
+  return order.filter((id) => {
+    const providerId = REVIEWERS[id]?.providerId;
+    if (!providerId || seen.has(providerId)) return false;
+    seen.add(providerId);
+    return true;
+  });
+}
+
+function spawnSpec(parentProviderId: string, name: Exclude<SpawnName, "review">): SpawnSpec {
   if (parentProviderId === "acp-cursor") {
     const agent = {
       explore: "cantrip-explore.md",
       contribute: "cantrip-implement.md",
       plan: "cantrip-plan.md",
-      review: "cantrip-review.md",
     }[name];
     return { providerId: "acp-cursor", agent: { dir: ".cursor", name: agent } };
   }
   if (parentProviderId === "claude-code") {
-    if (name === "review") {
-      return { providerId: "acp-antigravity", model: "gemini-4-argon", reasoningLevel: "medium" };
-    }
     const claude = {
       explore: { model: "claude-haiku-5-5", agent: { dir: ".claude" as const, name: "explorer.md" } },
       contribute: { model: "claude-haiku-5-5", agent: { dir: ".claude" as const, name: "worker.md" } },
@@ -75,16 +104,25 @@ function spawnSpec(parentProviderId: string, name: SpawnName): {
       explore: { model: "claude-haiku-5.5", sessionOptions: { agent: "explorer" } },
       contribute: { model: "gpt-6.1-terra", reasoningLevel: "medium", sessionOptions: { agent: "worker" } },
       plan: { model: "claude-opus-5.5", sessionOptions: { agent: "planner" } },
-      review: { model: "claude-opus-5.5", reasoningLevel: "medium", sessionOptions: { agent: "reviewer" } },
     }[name];
     return { providerId: "acp-github-copilot-cli", ...copilot };
   }
-  // A Gemini worker (an Antigravity parent) is reviewed by the Copilot reviewer persona.
-  if (parentProviderId === "acp-antigravity" && name === "review") {
-    return { providerId: "acp-github-copilot-cli", model: "claude-opus-5.5", reasoningLevel: "medium", sessionOptions: { agent: "reviewer" } };
-  }
   return { providerId: parentProviderId };
 }
+
+// A failure that means the provider cannot serve this review: quota, credits, spend limit, or login.
+const QUOTA_CATEGORIES = new Set(["rate-limit", "billing", "budget-exceeded", "unauthorized"]);
+const DEFAULT_BLOCK_MS = 60 * 60 * 1000;
+
+type ReviewRecord = {
+  orchestratorId: string;
+  worker: string;
+  body: string;
+  chain: string[];
+  index: number;
+  projectId: string;
+  environmentId: string | null;
+};
 
 /**
  * An agent's file, read in this order: the copy in the user's home on the machine
@@ -141,12 +179,16 @@ function procedure(_providerId: string, role: Role): string {
     "Do not name the model and do not say which agent it is. spawn reads that from the agent file.",
     "explore may use the terminal. contribute is the only one that edits.",
     "Review loop: spawn contribute first and wait for its report. Then spawn review with worker set to the contribute thread id. The reviewer sends defects straight to that worker, which fixes them and replies, up to two rounds. Wait on the reviewer alone and read its output: CLEAN, or ESCALATE with the findings left. On ESCALATE, tell the same worker what to do next, or ask the user.",
+    "Each review runs on a provider other than the worker's. If a reviewer stops on a provider quota, the plugin moves the review to the next provider and messages you the new reviewer thread id: wait on that one instead. If a reviewer ends in error and no such message comes, spawn review again with the same worker; spawn skips providers that are out of quota.",
     "Do not use the Task tool.",
   ].join(" ");
 }
 
-function reviewerProtocol(workerId: string): string {
+function reviewerProtocol(workerId: string, replaces?: string): string {
   return [
+    ...(replaces
+      ? ["You replace reviewer thread " + replaces + ", which stopped because its provider ran out of quota. First read bb thread output " + workerId + ". If the worker already answered a REVIEW round from " + replaces + ", review its current code and continue the round count from there."]
+      : []),
     "Review loop. You review the worker's change and send defects to the worker, not to the orchestrator.",
     "The user authorized one messaging exception for this loop only: you may message your worker, thread " + workerId + ", and no other thread.",
     "Your own thread id is $BB_THREAD_ID; run bb status if it is unset. Use it only to name yourself in messages.",
@@ -263,9 +305,37 @@ export default async function plugin(bb: BbPluginApi) {
         const exists = await bb.sdk.threads.get({ threadId: worker }).then(() => true, () => false);
         if (!exists) return fail(`spawn review worker ${worker} was not found.`);
       }
+      if (name === "review") {
+        const record: ReviewRecord = {
+          orchestratorId: ctx.threadId,
+          worker,
+          body,
+          chain: reviewChain(parent.providerId),
+          index: 0,
+          projectId: parent.projectId,
+          environmentId: parent.environmentId ?? null,
+        };
+        const spawned = await spawnReviewer(record);
+        if (!spawned) {
+          return fail(`No reviewer is available: every review provider for a ${parent.providerId} worker (${record.chain.map((id) => REVIEWERS[id].providerId).join(", ")}) is out of quota or unavailable. Ask the user.`);
+        }
+        return {
+          content: [{
+            type: "text" as const,
+            text: [
+              `Spawned review as ${spawned.id} on ${spawned.providerId}. Status: ${spawned.status}.`,
+              "spawn returns when the thread exists. It does not wait for the agent.",
+              "If this reviewer stops on a provider quota, you get a message with the replacement reviewer id; wait on that one instead.",
+              "Wait, then read the report, before you use it:",
+              `bb thread wait ${spawned.id}`,
+              `bb thread output ${spawned.id}`,
+            ].join("\n"),
+          }],
+        };
+      }
       const spec = spawnSpec(parent.providerId, name);
       const defined = spec.agent ? agentDefinition(spec.agent, (message) => bb.log.warn(message)) : undefined;
-      const protocol = name === "review" ? reviewerProtocol(worker) : name === "contribute" ? workerProtocol() : "";
+      const protocol = name === "contribute" ? workerProtocol() : "";
       const prompt = [
         defined?.body,
         "Assignment:\n" + body,
@@ -276,7 +346,7 @@ export default async function plugin(bb: BbPluginApi) {
         projectId: parent.projectId,
         providerId: spec.providerId,
         parentThreadId: ctx.threadId,
-        parentNotifications: name === "contribute" || name === "review" ? "stuck" : "auto",
+        parentNotifications: name === "contribute" ? "stuck" : "auto",
         permissionMode: "full",
         title: name,
         ...(parent.environmentId
@@ -303,6 +373,102 @@ export default async function plugin(bb: BbPluginApi) {
         }],
       };
     },
+  });
+
+  // Quota tracking. A provider that failed a reviewer on quota is skipped until its window resets.
+  const kv = bb.storage.kv;
+  const blockKey = (providerId: string) => `quota-blocked:${providerId}`;
+  const reviewKey = (threadId: string) => `review:${threadId}`;
+
+  async function providerAvailable(providerId: string): Promise<boolean> {
+    const until = await kv.get<number>(blockKey(providerId));
+    if (typeof until === "number") {
+      if (until > Date.now()) return false;
+      await kv.delete(blockKey(providerId));
+    }
+    // Best effort: a provider whose usage report shows a used-up window, or no usable login, is skipped.
+    try {
+      const usage = await Promise.race([
+        bb.sdk.system.usageLimits({ providerId }),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
+      ]);
+      const entry = usage?.[providerId];
+      if (!entry) return true;
+      if (entry.status === "not_installed" || entry.status === "unauthenticated" || entry.status === "expired") return false;
+      if (entry.status === "ok" && entry.windows.some((w) => w.usedPercent >= 100)) return false;
+    } catch {
+      // No usage report for this provider; assume it is available.
+    }
+    return true;
+  }
+
+  async function spawnReviewer(
+    record: ReviewRecord,
+    replaces?: string,
+  ): Promise<{ id: string; status: string; providerId: string } | null> {
+    for (let index = record.index; index < record.chain.length; index++) {
+      const spec = REVIEWERS[record.chain[index]];
+      const providerId = spec.providerId;
+      if (!(await providerAvailable(providerId))) continue;
+      const prompt = ["Assignment:\n" + record.body, reviewerProtocol(record.worker, replaces)].join("\n\n");
+      try {
+        const child = await bb.sdk.threads.spawn({
+          projectId: record.projectId,
+          providerId: spec.providerId,
+          parentThreadId: record.orchestratorId,
+          parentNotifications: "stuck",
+          permissionMode: "full",
+          title: "review",
+          ...(record.environmentId
+            ? { environment: { type: "reuse" as const, environmentId: record.environmentId } }
+            : { environment: { type: "project-default" as const } }),
+          ...(spec.model ? { model: spec.model } : {}),
+          ...(spec.reasoningLevel ? { reasoningLevel: spec.reasoningLevel } : {}),
+          ...(spec.sessionOptions ? { sessionOptions: spec.sessionOptions } : {}),
+          pluginMetadata: { role: "regular" },
+          prompt,
+        });
+        await kv.set(reviewKey(child.id), { ...record, index } satisfies ReviewRecord);
+        return { id: child.id, status: child.status, providerId };
+      } catch (error) {
+        bb.log.warn(`review spawn on ${providerId} failed: ${String(error)}`);
+      }
+    }
+    return null;
+  }
+
+  bb.events.on("turn.failed", async (event) => {
+    const record = await kv.get<ReviewRecord>(reviewKey(event.threadId));
+    if (!record) return;
+    const category = event.errorInfo?.category;
+    const quota = (category && QUOTA_CATEGORIES.has(category)) || event.rateLimits?.status === "blocked";
+    if (!quota) return;
+    await kv.delete(reviewKey(event.threadId));
+
+    const failedProvider = REVIEWERS[record.chain[record.index]].providerId;
+    const resets = (event.rateLimits?.windows ?? [])
+      .filter((w) => w.status === "blocked" && typeof w.resetsAtMs === "number")
+      .map((w) => w.resetsAtMs as number);
+    const until = resets.length ? Math.max(...resets) : Date.now() + DEFAULT_BLOCK_MS;
+    await kv.set(blockKey(failedProvider), until);
+
+    // Stop the failed reviewer so a core retry after the window resets does not run a second review.
+    await bb.sdk.threads.archive({ threadId: event.threadId }).catch(() => undefined);
+
+    const next = await spawnReviewer({ ...record, index: record.index + 1 }, event.threadId);
+    const text = next
+      ? [
+          `Reviewer ${event.threadId} on ${failedProvider} stopped: provider quota reached (${category ?? "rate limit"}).`,
+          `The review moved to ${next.id} on ${next.providerId}, for worker ${record.worker}.`,
+          `Wait on the new reviewer: bb thread wait ${next.id}, then bb thread output ${next.id}.`,
+        ].join("\n")
+      : [
+          `Reviewer ${event.threadId} on ${failedProvider} stopped: provider quota reached (${category ?? "rate limit"}).`,
+          `No other review provider is available for worker ${record.worker} (tried ${record.chain.map((id) => REVIEWERS[id].providerId).join(", ")}). Ask the user how to proceed.`,
+        ].join("\n");
+    await bb.sdk.threads
+      .send({ threadId: record.orchestratorId, mode: "auto", input: [{ type: "text", text, mentions: [] }] })
+      .catch((error) => bb.log.warn(`could not tell orchestrator ${record.orchestratorId}: ${String(error)}`));
   });
 
   bb.agents.registerTool({

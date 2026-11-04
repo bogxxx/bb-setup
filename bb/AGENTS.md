@@ -4,7 +4,7 @@ The composer Role control chooses the mode. Call `role_choice` and follow it.
 
 Regular does the work in this session. Orchestrator delegates to that provider's role agents and uses that orchestrator's prompt. Do not copy another provider's model pins.
 
-On GitHub Copilot, the reviewer agent is Opus 5.5 (`claude-opus-5.5`). On Claude, a review is Gemini 4 Argon (`gemini-4-argon` on Antigravity, provider `acp-antigravity`) or, inside Cursor, `cantrip-review`. On Cursor, the orchestrator's review is `cantrip-review`.
+A review always runs on a provider other than the worker's. The `spawn` tool picks it, and when a reviewer hits its provider's quota it moves the review to the next provider in the chain and messages the orchestrator the new reviewer id. Chains, first choice first: a Claude worker gets Gemini 4 Argon (`acp-antigravity`), then Codex `gpt-6-luna`, then the Copilot `reviewer` agent on `gpt-6.1-terra`. A Copilot worker gets Claude Opus 5.5 (`claude-code`), then Gemini 4 Argon, then Codex. A Cursor worker gets Gemini 4 Argon, then Claude Opus 5.5, then Codex. A Gemini worker gets the Copilot `reviewer` agent (Opus 5.5), then Codex, then Claude Opus 5.5. In-process subagent reviews, with no BB `spawn` tool, still use the provider's own reviewer: Copilot `reviewer` and Cursor `cantrip-review`.
 
 Review is a loop: the reviewer sends defects straight to the worker that wrote the change, and reports to the orchestrator only at the end (`CLEAN` or `ESCALATE`). The user authorized that messaging exception for this loop only; it does not extend to other threads.
 
