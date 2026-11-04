@@ -2,12 +2,12 @@
   "installed": [
     {
       "id": "agent-graph",
-      "source": "git:https://github.com/nathancolgate/bb-plugin-agent-graph.git@semver:^0.1.0",
+      "source": "git:https://github.com/nathancolgate/bb-plugin-agent-graph.git@semver:0.1.0",
       "enabled": true
     },
     {
       "id": "agent-traces",
-      "source": "git:https://github.com/charpeni/bb-plugins.git@semver:agent-traces/:^1.0.0",
+      "source": "git:https://github.com/charpeni/bb-plugins.git@semver:agent-traces/:1.0.0",
       "enabled": true
     },
     {
@@ -17,19 +17,17 @@
     },
     {
       "id": "burn",
-      "source": "path:C:\\Users\\krech\\src\\burn",
-      "enabled": true,
-      "clone": "https://github.com/kalindudc/burn.git",
-      "path": "~\\src\\burn"
+      "source": "https://github.com/kalindudc/burn.git",
+      "enabled": true
     },
     {
       "id": "claude-subagents",
-      "source": "path:C:\\Users\\krech\\.bb\\dev-plugins\\bb-plugin-claude-subagents",
+      "source": "https://github.com/bogxxx/bb-setup.git",
       "enabled": true
     },
     {
       "id": "role-picker",
-      "source": "repo:plugins/bb-plugin-role-picker",
+      "source": "https://github.com/bogxxx/bb-setup.git",
       "enabled": true
     }
   ],
