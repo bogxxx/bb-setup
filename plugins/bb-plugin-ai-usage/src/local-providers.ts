@@ -29,10 +29,6 @@ function num(v: unknown): number {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
-function deviceOf(report: Report): string {
-  return report.team.devices.find((d) => d.this_device)?.name || report.collector.name || "this machine";
-}
-
 function meter(name: string, percentUsed: number, resetsAt: string | null, main: boolean): Window {
   const state = percentUsed >= 100 ? "out" : percentUsed >= 80 ? "tight" : "ok";
   return {
@@ -625,7 +621,7 @@ function seatInCost(report: Report, provider: string, name: string, plan: string
 }
 
 /** The cost line was an estimate that the whole subscription was spent, which contradicted the weekly limit. */
-function alignCost(report: Report): void {
+export function alignCost(report: Report): void {
   const cost = report.cost;
   if (cost === null || !cost.used_estimated || cost.used_pct === null) return;
   const main = report.team.providers
@@ -667,28 +663,20 @@ export function quotaLogins(): HostLogin[] {
   return out;
 }
 
-/** One card each for Cursor, Copilot, and Antigravity, showing what is left. */
-export function addLocalProviders(report: Report): void {
-  alignCost(report);
-  const device = deviceOf(report);
-  const named: { provider: string; account: TeamAccount | null }[] = [
-    { provider: "cursor", account: cursor(device) },
-    { provider: "antigravity", account: antigravity(device) },
-  ];
-  for (const item of named) {
-    if (item.account === null) continue;
-    const found = report.team.providers.find((p) => p.provider === item.provider);
-    if (found === undefined) report.team.providers.push({ provider: item.provider, accounts: [item.account] });
-    else found.accounts = [item.account];
-  }
-}
-
-/** A machine that does not run the collector still contributes the logins that live on it. */
+/**
+ * A machine that does not run the collector still contributes the logins that live on it.
+ * With `measuredAt`, the reading is an earlier one kept for a machine that is offline or
+ * whose live reading failed: its device says when it was last seen, and is marked old.
+ */
 export function mergeMeasured(
   report: Report,
   measured: { hostName: string; user: string; providers: { provider: string; name: string; plan: string | null; windows: { name: string; percentUsed: number; resetsAt: string | null }[] }[] },
+  options: { measuredAt?: number } = {},
 ): void {
   const deviceName = measured.hostName;
+  const stale = options.measuredAt !== undefined && Number.isFinite(options.measuredAt);
+  const seenAt = stale ? new Date(options.measuredAt!).toISOString() : null;
+  const ageSeconds = stale ? Math.max(0, Math.round((Date.now() - options.measuredAt!) / 1000)) : 0;
   const known = report.team.devices.find(
     (d) => d.name.toLowerCase().includes(deviceName.toLowerCase()) || d.os_user.toLowerCase() === measured.user.toLowerCase() || d.name.toLowerCase().includes(measured.user.toLowerCase()),
   );
@@ -700,16 +688,25 @@ export function mergeMeasured(
       name: deviceName,
       this_device: false,
       collector_version: "",
-      collected_at: new Date().toISOString(),
-      age_seconds: 0,
+      collected_at: seenAt ?? new Date().toISOString(),
+      age_seconds: ageSeconds,
       error: null,
       silent: false,
-      old: false,
+      old: stale,
       usage: emptyUsage(),
       burn: null,
-      note: measured.user,
+      note: stale ? `${measured.user}, last seen ${seenAt}` : measured.user,
       pooled: [],
     });
+  } else if (stale) {
+    // The report's own device keeps its newer reading; only one older than the snapshot is marked.
+    const reported = Date.parse(known.collected_at ?? "");
+    if (!Number.isFinite(reported) || reported < options.measuredAt!) {
+      known.old = true;
+      known.collected_at = seenAt!;
+      known.age_seconds = ageSeconds;
+      known.note = `${measured.user}, last seen ${seenAt}`;
+    }
   } else if (known.note === null || known.note === "") {
     known.note = measured.user;
   }

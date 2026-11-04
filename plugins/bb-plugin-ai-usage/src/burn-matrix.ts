@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import type { MatrixCell, Report, Usage } from "./report.js";
+import { machineInMatrix } from "./local-providers.js";
 
 const require = createRequire(import.meta.url);
 
@@ -216,10 +217,81 @@ function ensureTokenColumns(report: Report, totals: Map<string, Usage>): void {
   }
 }
 
-/** Writes Burn's five-kind token sums into the matching machine cells. A cell Burn did not count is left as it was. */
-export function fillMatrixFromBurn(report: Report, dataDir: string, now = Date.now()): void {
+/** A machine BB knows: its id and its name. */
+export interface HostName {
+  id: string;
+  name: string;
+}
+
+/** The host names BB keeps in bb.db, for machines the host list does not show. */
+function readHostNames(dataDir: string): HostName[] {
+  const bb = openDb(path.join(dataDir, "bb.db"));
+  if (bb === null) return [];
+  try {
+    return bb
+      .all("SELECT id, name FROM hosts")
+      .map((row) => ({ id: String(row.id ?? ""), name: String(row.name ?? "") }))
+      .filter((host) => host.id !== "" && host.name !== "");
+  } catch {
+    return [];
+  } finally {
+    bb.close();
+  }
+}
+
+/** The host part of a device label such as user@host, lower-cased. */
+function hostPart(device: string): string {
+  const label = device.toLowerCase();
+  const at = label.lastIndexOf("@");
+  return at === -1 ? label : label.slice(at + 1);
+}
+
+/**
+ * A row whose device_id is not a BB machine id is matched to the machine by
+ * its host name, then given that id, so the burn of that machine fills it.
+ */
+function matchRowsByName(report: Report, names: HostName[]): void {
+  const ids = new Set(names.map((host) => host.id));
+  for (const row of report.team.matrix.rows) {
+    if (ids.has(row.device_id)) continue;
+    const match = names.find((host) => host.name.toLowerCase() === hostPart(row.device));
+    if (match !== undefined) row.device_id = match.id;
+  }
+}
+
+/**
+ * A machine Burn counted gets a row even when it has no row yet, so its
+ * tokens are not dropped. Rows are added through the same name logic as the
+ * connected machines, so a row already named for the host is reused.
+ */
+function addRowsForCounted(report: Report, totals: Map<string, Usage>, names: HostName[]): void {
+  const counted = new Set<string>();
+  for (const [key, usage] of totals) {
+    if (positive(usage)) counted.add(key.split("\0")[0] ?? "");
+  }
+  for (const hostId of counted) {
+    if (report.team.matrix.rows.some((row) => row.device_id === hostId)) continue;
+    const host = names.find((item) => item.id === hostId);
+    if (host === undefined) continue;
+    machineInMatrix(report, host.name, "", host.id);
+  }
+}
+
+/**
+ * Writes Burn's five-kind token sums into the matching machine cells. A cell
+ * Burn did not count is left as it was, and a value replaces the cell, so a
+ * second run gives the same numbers. `hosts` is every machine BB knows,
+ * including ones that are offline.
+ */
+export function fillMatrixFromBurn(report: Report, dataDir: string, now: number, hosts: HostName[]): void {
   const totals = readTotals(dataDir, now);
+  const names = [...hosts];
+  for (const known of readHostNames(dataDir)) {
+    if (!names.some((host) => host.id === known.id)) names.push(known);
+  }
+  matchRowsByName(report, names);
   ensureTokenColumns(report, totals);
+  addRowsForCounted(report, totals, names);
   const columns = report.team.matrix.columns;
   const filled = new Set<number>();
   for (const row of report.team.matrix.rows) {

@@ -6,14 +6,15 @@ import { createHash } from "node:crypto";
 import type { BbPluginApi, ExperimentalPluginRpcHandlerContext } from "@get-bb/plugin-sdk";
 import demoTeam from "./demo/team.json" with { type: "json" };
 import { allowed } from "./src/args.js";
-import { hostContract, hostSignals, type Probe, type RunOutput } from "./src/contract.js";
+import { hostContract, hostSignals, type MeasuredUsage, type Probe, type RunOutput } from "./src/contract.js";
 import { inviteMessage } from "./src/invite.js";
 import { teamSource, type TeamSource } from "./src/team-source.js";
 import { BusyError, Jobs } from "./src/jobs.js";
 import { autoInstallable, installRefusal, NOTHING_COLLECTED, phaseOf, type HostFacts } from "./src/phase.js";
 import { fillMatrixFromBurn } from "./src/burn-matrix.js";
-import { addLocalProviders, machineInMatrix, mergeMeasured } from "./src/local-providers.js";
+import { machineInMatrix, mergeMeasured } from "./src/local-providers.js";
 import { readReport, SchemaError, type Report } from "./src/report.js";
+import { readTaken } from "./src/take.js";
 import { rpcContract, type HostView, type JobKind, type JobView } from "./src/rpc.js";
 
 const REPORT_TTL = 30_000;
@@ -136,12 +137,7 @@ export default async function plugin(bb: BbPluginApi) {
     c.reportCheckedAt = Date.now();
     if (out.code === 0 && out.json !== null) {
       try {
-        const report = readReport(out.json);
-        try {
-          addLocalProviders(report);
-        } catch (error) {
-          bb.log.warn(`local providers failed: ${error instanceof Error ? error.message : String(error)}`);
-        }
+        const report = readTaken(out.json);
         const hash = createHash("sha256").update(JSON.stringify(report)).digest("hex").slice(0, 32);
         c.reportState = { ok: true, schemaMismatch: false, nothingCollected: false, error: null };
         if (hash !== c.hash) {
@@ -168,32 +164,59 @@ export default async function plugin(bb: BbPluginApi) {
     bb.realtime.publish("changed", { hostId });
   }
 
-  /** Reads Codex and Copilot on every connected machine and adds those machines to the report. */
+  /** A machine's logins and row as they were at its last live reading, kept so it still shows when offline. */
+  interface Snapshot {
+    at: number;
+    name: string;
+    user: string;
+    providers: MeasuredUsage["providers"];
+  }
+
+  /**
+   * Adds every persistent machine to the report: its logins, its matrix row and
+   * its burn. The work runs on a copy that then replaces the cached report, so a
+   * `state` read never sees a half-filled one. A machine that is offline or whose
+   * live reading failed shows its last snapshot, marked with when it was seen.
+   */
   async function attachMachines(reportHostId: string): Promise<void> {
-    const report = cache(reportHostId).report;
-    if (report === null) return;
+    const base = cache(reportHostId).report;
+    if (base === null) return;
     const list = await hosts(true);
-    for (const machine of list.hosts) {
-      if (machine.status !== "connected") continue;
-      let user = "";
-      try {
-        const measured = await host.call("extras", {}, { hostId: machine.id, timeoutMs: 30_000 });
-        user = measured.user;
-        mergeMeasured(report, { ...measured, hostName: machine.name });
-      } catch (error) {
-        bb.log.warn(`extras on ${machine.name} failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-      // The row does not depend on extras. Its OS user comes from extras, or from the probe when extras failed.
-      if (user === "") user = cache(machine.id).probe?.user ?? (await probeHost(machine.id))?.user ?? "";
-      machineInMatrix(report, machine.name, user, machine.id);
+    const persistent = list.hosts.filter((x) => x.type === "persistent");
+    const live = await Promise.all(
+      persistent
+        .filter((machine) => machine.status === "connected")
+        .map(async (machine) => {
+          try {
+            const measured = await host.call("extras", {}, { hostId: machine.id, timeoutMs: 30_000 });
+            await bb.storage.kv.set(`snapshot:${machine.id}`, { at: Date.now(), name: machine.name, user: measured.user, providers: measured.providers } satisfies Snapshot);
+            return { id: machine.id, measured };
+          } catch (error) {
+            bb.log.warn(`extras on ${machine.name} failed: ${error instanceof Error ? error.message : String(error)}`);
+            return { id: machine.id, measured: null };
+          }
+        }),
+    );
+    const next = structuredClone(base);
+    for (const machine of persistent) {
+      const reading = live.find((x) => x.id === machine.id)?.measured ?? null;
+      const snap = reading === null ? await bb.storage.kv.get<Snapshot>(`snapshot:${machine.id}`) : undefined;
+      if (reading !== null) mergeMeasured(next, { ...reading, hostName: machine.name });
+      else if (snap !== undefined) mergeMeasured(next, { ...snap, hostName: machine.name }, { measuredAt: snap.at });
+      // The row does not depend on extras: its OS user comes from the live reading, the snapshot, or the probe.
+      let user = reading?.user ?? snap?.user ?? "";
+      if (user === "" && machine.status === "connected") user = cache(machine.id).probe?.user ?? (await probeHost(machine.id))?.user ?? "";
+      machineInMatrix(next, machine.name, user, machine.id);
     }
     try {
-      fillMatrixFromBurn(report, bb.server.experimental_dataDir);
+      fillMatrixFromBurn(next, bb.server.experimental_dataDir, Date.now(), list.hosts.map((h) => ({ id: h.id, name: h.name })));
     } catch (error) {
       bb.log.warn(`burn tokens failed: ${error instanceof Error ? error.message : String(error)}`);
     }
     const stored = cache(reportHostId);
-    stored.hash = createHash("sha256").update(JSON.stringify(report)).digest("hex").slice(0, 32);
+    stored.report = next;
+    stored.hash = createHash("sha256").update(JSON.stringify(next)).digest("hex").slice(0, 32);
+    stored.reportAt = Date.now();
   }
 
   /** Reads the machine's report again, once at a time; every window shares the answer. */
@@ -293,6 +316,7 @@ export default async function plugin(bb: BbPluginApi) {
     if (out.code !== 0) throw new Error(out.message || "the run failed");
     take(hostId, out);
     await probeHost(hostId, true);
+    await attachMachines(hostId);
     return "collected";
   }
 
@@ -494,7 +518,10 @@ export default async function plugin(bb: BbPluginApi) {
           log("ai-usage update");
           const said = check(await run(t.id, t.probe, ["update"], TIMEOUT.update));
           const p = await probeHost(t.id, true);
-          if (p !== null) take(t.id, await run(t.id, p, ["report", "--json"], TIMEOUT.report, { json: true }));
+          if (p !== null) {
+            take(t.id, await run(t.id, p, ["report", "--json"], TIMEOUT.report, { json: true }));
+            await attachMachines(t.id);
+          }
           return said.split("\n").at(-1) ?? "updated";
         }),
       };
