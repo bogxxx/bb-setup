@@ -70,6 +70,10 @@ function spawnSpec(parentProviderId: string, name: SpawnName): {
     }[name];
     return { providerId: "acp-github-copilot-cli", ...copilot };
   }
+  // A Gemini worker (an Antigravity parent) is reviewed by the Copilot reviewer persona.
+  if (parentProviderId === "acp-antigravity" && name === "review") {
+    return { providerId: "acp-github-copilot-cli", model: "claude-opus-5.5", reasoningLevel: "medium", sessionOptions: { agent: "reviewer" } };
+  }
   return { providerId: parentProviderId };
 }
 
@@ -118,9 +122,9 @@ function reviewerProtocol(workerId: string): string {
     "Review the worker's diff against the assignment. Read files and run read-only git or diff commands only. Do not edit files.",
     "If you find no defects, end your turn with a final report that starts with CLEAN.",
     "If you find defects, send them to the worker in one message: bb thread tell " + workerId + " --mode auto --message-file -, with a quoted heredoc. The first line is `REVIEW round N/2 from thread:<your thread id>`, where N is 1 or 2. Then list each finding in severity order with path:line, the failure scenario, and the required correction.",
-    "Then run bb thread wait " + workerId + ", and read bb thread output " + workerId + ". Go on only when it starts with FIXED round N or BLOCKED for the round you sent; otherwise wait again. Then review the changed code again.",
+    "Then run bb thread wait " + workerId + ", and read bb thread output " + workerId + ". Go on only when it starts with FIXED round N or BLOCKED for the round you sent. If it does not, wait again, at most two more times. If the worker is idle and still has no FIXED or BLOCKED reply for your round, treat the round as BLOCKED. Then review the changed code again.",
     "Send at most two REVIEW rounds. If findings remain after the second fix, or the worker replies BLOCKED, end your turn with a final report that starts with ESCALATE and lists the findings left.",
-    "Send no other messages, acknowledgements, or thanks. Your final report is read by the orchestrator with bb thread output.",
+    "Send no other messages, acknowledgements, or thanks. Do not bb thread tell the orchestrator, even when bb status shows Parent notifications: stuck. Your final report is read by the orchestrator with bb thread output.",
   ].join("\n");
 }
 
@@ -131,6 +135,7 @@ function workerProtocol(): string {
     "For a REVIEW round, fix only the findings in that message and keep to your original scope. Run the verification commands from your original assignment. If a finding is wrong, change no code for it; say why, with evidence.",
     "Then reply with bb thread tell <reviewer id> --mode auto --message-file -, using a quoted heredoc. Start the reply with `FIXED round N`, then each finding and what you changed, then the check commands with exit codes and the tail of their output. If you cannot fix a finding, start the reply with `BLOCKED` and the reason. Put the same text in your final response.",
     "Do not decide that the task is complete, do not review the diff, and send no acknowledgements or thanks.",
+    "Your final response is read by the orchestrator with bb thread output. Do not bb thread tell the orchestrator, even when bb status shows Parent notifications: stuck.",
   ].join("\n");
 }
 
@@ -208,28 +213,33 @@ export default async function plugin(bb: BbPluginApi) {
       if (mode.role !== "orchestrator") {
         return { isError: true, content: [{ type: "text" as const, text: "spawn is only for the orchestrator role." }] };
       }
+      const fail = (text: string) => ({ isError: true, content: [{ type: "text" as const, text }] });
+      const clean = (id: string) => id.trim().replace(/^@thread:/, "");
       // Fallback for sessions whose published schema predates the worker parameter: accept a
-      // first assignment line `worker: thr_xxx` when the parameter is missing.
-      const fallback = name === "review" && !workerParam ? assignment.match(/^worker:\s*(\S+)[ \t]*\r?\n/) : null;
-      const worker = workerParam ?? fallback?.[1];
-      if (fallback) assignment = assignment.slice(fallback[0].length);
-      if (name === "review" && !worker) {
-        return { isError: true, content: [{ type: "text" as const, text: "spawn review needs worker: the contribute thread id whose diff is reviewed." }] };
+      // first assignment line `worker: thr_xxx`. The line is removed from the assignment.
+      const firstLine = name === "review" ? assignment.match(/^worker:[ \t]*(\S+)[ \t]*(?:\r?\n|$)/) : null;
+      if (workerParam && firstLine && clean(firstLine[1]) !== clean(workerParam)) {
+        return fail("spawn review got two different worker ids: the worker parameter and the worker: line.");
       }
-      if (name !== "review" && worker) {
-        return { isError: true, content: [{ type: "text" as const, text: "worker is only for spawn review." }] };
+      const worker = clean(workerParam ?? firstLine?.[1] ?? "");
+      const body = (firstLine ? assignment.slice(firstLine[0].length) : assignment).trim();
+      if (!body) return fail("spawn needs an assignment after any worker: line.");
+      if (name !== "review" && worker) return fail("worker is only for spawn review.");
+      if (name === "review") {
+        if (!worker) return fail("spawn review needs worker: the contribute thread id whose diff is reviewed.");
+        if (!/^thr_[a-z0-9]+$/i.test(worker)) return fail(`spawn review worker must be a thread id like thr_xxx, got "${worker}".`);
+        if (worker === ctx.threadId) return fail("spawn review worker must not be the orchestrator's own thread.");
+        const exists = await bb.sdk.threads.get({ threadId: worker }).then(() => true, () => false);
+        if (!exists) return fail(`spawn review worker ${worker} was not found.`);
       }
       const spec = spawnSpec(parent.providerId, name);
       const defined = spec.file ? agentDefinition(spec.file) : undefined;
-      const protocol = name === "review" && worker ? reviewerProtocol(worker) : name === "contribute" ? workerProtocol() : "";
+      const protocol = name === "review" ? reviewerProtocol(worker) : name === "contribute" ? workerProtocol() : "";
       const prompt = [
-        defined?.body ?? "",
-        "",
-        "Assignment:",
-        assignment,
-        "",
+        defined?.body,
+        "Assignment:\n" + body,
         protocol,
-      ].filter((line) => line !== "").join("\n");
+      ].filter((part): part is string => Boolean(part)).join("\n\n");
 
       const child = await bb.sdk.threads.spawn({
         projectId: parent.projectId,

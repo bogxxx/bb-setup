@@ -33,7 +33,7 @@ Your own tool use is limited to:
 1. `archgate adr list` and the baseline and final `archgate check --base`, when the repository has `.archgate/`.
 2. Confirming what agents produced: `git status`, `git diff --stat`, `git log`, and targeted reads of the hunks you need to judge.
 3. A final re-run of the one or two commands that prove the acceptance criteria.
-4. Spawning the Antigravity Argon review thread described below.
+4. Calling `spawn` for `review` and waiting on the reviewer, as described below.
 
 Reading beyond a few hunks goes to the explorer. Design goes to the planner. Changes and routine verification go to the worker. Static review leaves Claude.
 

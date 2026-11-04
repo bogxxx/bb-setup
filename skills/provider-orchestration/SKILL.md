@@ -71,7 +71,7 @@ The reviewer tools are view, grep, glob, skill, bash, and powershell. Its shell 
 
 ## Claude Code (`claude-code`)
 
-Orchestrator: `~/.claude/agents/orchestrator.md`. It spawns only `explorer`, `planner`, and `worker` from `~/.claude/agents`.
+Orchestrator: `~/.claude/agents/orchestrator.md`. In BB it calls the `spawn` tool with `explore`, `contribute`, `plan`, and `review`. Its in-process Agent tool subagents are `explorer`, `planner`, and `worker` from `~/.claude/agents`.
 
 Confirmed catalog ids, effort `medium`:
 
@@ -91,6 +91,6 @@ Spawn the review with the `spawn` tool, name `review`, and `worker` set to the c
 Explore, plan, and implement with models from that provider's live catalog. Do not invent a model id. Follow the review rule: the reviewer's family must differ from the worker's.
 
 - Worker is not Gemini: review with Gemini 4 Argon, through the `spawn` tool with name `review` as in Claude Code.
-- Worker is Gemini, for example on Antigravity: review with the Copilot reviewer persona. Use provider `acp-github-copilot-cli`, model `claude-opus-5.5`, reasoning level `medium` and `--option agent=reviewer`.
+- Worker is Gemini, for example on Antigravity: the `spawn` tool with name `review` on an Antigravity parent uses the Copilot reviewer persona (provider `acp-github-copilot-cli`, model `claude-opus-5.5`, reasoning level `medium`, `agent=reviewer`). Do not pass `--option agent=reviewer` yourself.
 
-The spawn tool maps `review` only for Claude Code, GitHub Copilot, and Cursor parents. For any other parent it does not pick the reviewer for you. For that case, use `bb thread spawn` with the provider and options above, and write the loop protocol into its prompt yourself: the `REVIEW round` message to the worker, the two-round limit, and the `CLEAN` and `ESCALATE` endings. Say in the report that the tool did not choose it.
+The `spawn` tool maps `review` for Claude Code, GitHub Copilot, Cursor, and Antigravity parents. For any other parent, `spawn review` runs on the parent's own provider, which is the worker's family, so do not use it for review. Use `bb thread spawn` with the provider and options above, pass `--parent-notifications stuck`, and write the loop protocol into the prompt yourself: the `REVIEW round` message to the worker, the two-round limit, and the `CLEAN` and `ESCALATE` endings. Say in the report that you did this.
