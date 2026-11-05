@@ -147,6 +147,24 @@ function spawnSpec(parentProviderId: string, name: Exclude<SpawnName, "review">)
 const QUOTA_CATEGORIES = new Set(["rate-limit", "billing", "budget-exceeded", "unauthorized"]);
 const DEFAULT_BLOCK_MS = 60 * 60 * 1000;
 
+// Some providers (Antigravity) do not fail the turn on quota: they reply with a short notice,
+// such as "⚠ Individual quota reached. ... Resets in 144h15m35s.", and complete the turn.
+const QUOTA_NOTICE = /\bquota (?:reached|exceeded|exhausted)\b|\b(?:usage|rate) limit (?:reached|exceeded)\b/i;
+
+/** The reset time from a provider's quota notice, when the reply is one. Null when it is not. */
+export function quotaNoticeUntil(text: string | null, now = Date.now()): number | null {
+  const trimmed = text?.trim() ?? "";
+  // A review report is long and starts with CLEAN or ESCALATE; a quota notice is one short line.
+  if (!trimmed || trimmed.length > 400 || /^(?:CLEAN|ESCALATE)\b/.test(trimmed)) return null;
+  if (!QUOTA_NOTICE.test(trimmed)) return null;
+  const resets = trimmed.match(/resets in\s+((?:\d+\s*[dhms]\s*)+)/i)?.[1];
+  if (!resets) return now + DEFAULT_BLOCK_MS;
+  const unit: Record<string, number> = { d: 86_400_000, h: 3_600_000, m: 60_000, s: 1000 };
+  let ms = 0;
+  for (const [, n, u] of resets.matchAll(/(\d+)\s*([dhms])/gi)) ms += Number(n) * unit[u.toLowerCase()];
+  return now + (ms || DEFAULT_BLOCK_MS);
+}
+
 type ReviewRecord = {
   orchestratorId: string;
   worker: string;
@@ -476,38 +494,54 @@ export default async function plugin(bb: BbPluginApi) {
     return null;
   }
 
-  bb.events.on("turn.failed", async (event) => {
-    const record = await kv.get<ReviewRecord>(reviewKey(event.threadId));
+  // A reviewer stopped on its provider's quota: block that provider until the reset, stop the
+  // reviewer, start the next one in the chain, and tell the orchestrator.
+  async function moveReview(threadId: string, until: number, reason: string): Promise<void> {
+    const record = await kv.get<ReviewRecord>(reviewKey(threadId));
     if (!record) return;
-    const category = event.errorInfo?.category;
-    const quota = (category && QUOTA_CATEGORIES.has(category)) || event.rateLimits?.status === "blocked";
-    if (!quota) return;
-    await kv.delete(reviewKey(event.threadId));
+    // Delete first, so a second event for the same reviewer does not move the review twice.
+    await kv.delete(reviewKey(threadId));
 
     const failedProvider = reviewerAt(record, record.index).providerId;
-    const resets = (event.rateLimits?.windows ?? [])
-      .filter((w) => w.status === "blocked" && typeof w.resetsAtMs === "number")
-      .map((w) => w.resetsAtMs as number);
-    const until = resets.length ? Math.max(...resets) : Date.now() + DEFAULT_BLOCK_MS;
     await kv.set(blockKey(failedProvider), until);
 
     // Stop the failed reviewer so a core retry after the window resets does not run a second review.
-    await bb.sdk.threads.archive({ threadId: event.threadId }).catch(() => undefined);
+    await bb.sdk.threads.archive({ threadId }).catch(() => undefined);
 
-    const next = await spawnReviewer({ ...record, index: record.index + 1 }, event.threadId);
+    const next = await spawnReviewer({ ...record, index: record.index + 1 }, threadId);
+    const stopped = `Reviewer ${threadId} on ${failedProvider} stopped: provider quota reached (${reason}).`;
     const text = next
       ? [
-          `Reviewer ${event.threadId} on ${failedProvider} stopped: provider quota reached (${category ?? "rate limit"}).`,
+          stopped,
           `The review moved to ${next.id} on ${next.providerId}, for worker ${record.worker}.`,
           `Wait on the new reviewer: bb thread wait ${next.id}, then bb thread output ${next.id}.`,
         ].join("\n")
       : [
-          `Reviewer ${event.threadId} on ${failedProvider} stopped: provider quota reached (${category ?? "rate limit"}).`,
+          stopped,
           `No other review provider is available for worker ${record.worker} (tried ${chainProviders(record)}). Ask the user how to proceed.`,
         ].join("\n");
+    bb.log.info(text);
     await bb.sdk.threads
       .send({ threadId: record.orchestratorId, mode: "auto", input: [{ type: "text", text, mentions: [] }] })
       .catch((error) => bb.log.warn(`could not tell orchestrator ${record.orchestratorId}: ${String(error)}`));
+  }
+
+  bb.events.on("turn.failed", async (event) => {
+    const category = event.errorInfo?.category;
+    const quota = (category && QUOTA_CATEGORIES.has(category)) || event.rateLimits?.status === "blocked";
+    if (!quota) return;
+    const resets = (event.rateLimits?.windows ?? [])
+      .filter((w) => w.status === "blocked" && typeof w.resetsAtMs === "number")
+      .map((w) => w.resetsAtMs as number);
+    const until = resets.length ? Math.max(...resets) : Date.now() + DEFAULT_BLOCK_MS;
+    await moveReview(event.threadId, until, category ?? "rate limit");
+  });
+
+  // Providers that report quota as a reply and complete the turn (Antigravity).
+  bb.events.on("thread.idle", async ({ thread, lastAssistantText }) => {
+    const until = quotaNoticeUntil(lastAssistantText);
+    if (until === null) return;
+    await moveReview(thread.id, until, "quota notice");
   });
 
   bb.agents.registerTool({

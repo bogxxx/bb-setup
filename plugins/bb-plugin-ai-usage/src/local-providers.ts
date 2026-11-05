@@ -481,6 +481,45 @@ function family(id: string): string | null {
   return null;
 }
 
+function safeValue(value: unknown, depth = 0): unknown {
+  if (value === null || typeof value === "boolean" || typeof value === "number") return value;
+  if (typeof value === "string") {
+    if (value.length > 80 || value.includes("@") || /\s/.test(value)) return `[string ${value.length}]`;
+    return value;
+  }
+  if (depth >= 3 || typeof value !== "object") return `[${typeof value}]`;
+  if (Array.isArray(value)) return value.slice(0, 8).map((item) => safeValue(item, depth + 1));
+  const out: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (/token|secret|auth|email|credential/i.test(key)) continue;
+    out[key] = safeValue(item, depth + 1);
+  }
+  return out;
+}
+
+/** Shape of the live model list, with secrets removed. */
+export function gravityBucketProbe(): unknown {
+  const token = antigravityRefresh();
+  if (token === null) return null;
+  const models = postJson("https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels", token);
+  if (models === null || typeof models !== "object") return { models: null };
+  const root = models as Record<string, unknown>;
+  const table = root.models;
+  if (table === null || typeof table !== "object" || Array.isArray(table)) return { top: Object.keys(root), models: safeValue(models) };
+  const rows = Object.entries(table as Record<string, unknown>).map(([id, value]) => {
+    const item = value !== null && typeof value === "object" ? (value as Record<string, unknown>) : {};
+    const quota = item.quotaInfo !== null && typeof item.quotaInfo === "object" ? (item.quotaInfo as Record<string, unknown>) : {};
+    return {
+      id,
+      keys: Object.keys(item).sort(),
+      remainingFraction: typeof quota.remainingFraction === "number" ? quota.remainingFraction : null,
+      resetTime: typeof quota.resetTime === "string" ? quota.resetTime : null,
+      quotaKeys: Object.keys(quota).sort(),
+    };
+  });
+  return { top: Object.keys(root), rows };
+}
+
 const ANTIGRAVITY_SIGNED_OUT = "Antigravity is installed, but its sign-in could not be read.";
 
 function antigravity(device: string): TeamAccount | null {
