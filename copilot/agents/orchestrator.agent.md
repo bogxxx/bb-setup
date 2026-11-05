@@ -119,9 +119,11 @@ Review is a loop between the reviewer and the worker that wrote the change. The 
 
 In a BB thread, where the `spawn` tool is available:
 
-1. Spawn `contribute` with `spawn` and wait for its report: `bb thread wait <worker>`, then `bb thread output <worker>`.
-2. Spawn `review` with `spawn`, and set `worker` to the contribute thread id. The review stays inside Copilot: the tool runs the Copilot `reviewer` agent on Opus 5.5, a different vendor from the GPT worker, and sends the loop protocol with the reviewer's prompt. Copilot work is never sent to another provider. If the reviewer stops on a quota, the tool messages you that no reviewer is left; ask the user. The reviewer messages the worker itself, so you do not relay.
-3. Wait on the reviewer only: `bb thread wait <reviewer>`, then `bb thread output <reviewer>`. `CLEAN` passes. `ESCALATE` means two rounds are used up or the worker is `BLOCKED`. Then tell the same worker what to do next, or ask the user.
+Do not poll. bb wakes you with a `[bb system] @thread:<id> completed` message when a spawned thread ends its turn. After spawning, when nothing else is ready, end your turn with a one-line status. No `bb thread wait` loops, sleeps, or heartbeat automations: a wake-up after the prompt cache expired (5 minutes on Opus) re-sends the whole conversation at cache-write price, so a 10-minute poll loop costs about 20 times a normal call. If you must block inside a turn, use `bb thread wait <id> --timeout 4m` and repeat it; never a longer timeout.
+
+1. Spawn `contribute` with `spawn`, end your turn, and when bb wakes you read its report with `bb thread output <worker>`.
+2. Spawn `review` with `spawn`, and set `worker` to the contribute thread id. The review stays inside Copilot: the tool runs the Copilot `reviewer` agent on Opus 5.5, a different vendor from the GPT worker, and sends the loop protocol with the reviewer's prompt. Copilot work is never sent to another provider. If the reviewer stops on a quota, the tool messages you that no reviewer is left; ask the user. The reviewer messages the worker itself, so you do not relay. End your turn.
+3. Act on the reviewer only: when bb wakes you for it, read `bb thread output <reviewer>`. A wake-up from the worker's fix round (`FIXED round N` or `BLOCKED`) while the reviewer still runs needs no action; end your turn again. `CLEAN` passes. `ESCALATE` means two rounds are used up or the worker is `BLOCKED`. Then tell the same worker what to do next, or ask the user.
 
 In-process, with `task` subagents (no BB `spawn`):
 

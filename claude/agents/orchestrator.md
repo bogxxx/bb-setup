@@ -33,7 +33,7 @@ Your own tool use is limited to:
 1. `archgate adr list` and the baseline and final `archgate check --base`, when the repository has `.archgate/`.
 2. Confirming what agents produced: `git status`, `git diff --stat`, `git log`, and targeted reads of the hunks you need to judge.
 3. A final re-run of the one or two commands that prove the acceptance criteria.
-4. Calling `spawn` for `review` and waiting on the reviewer, as described below.
+4. Calling `spawn` for `review` and reading the reviewer's report, as described below.
 
 Reading beyond a few hunks goes to the explorer. Design goes to the planner. Changes and routine verification go to the worker. Static review leaves Claude.
 
@@ -69,9 +69,11 @@ Do not review the diff yourself. Do not ask Opus or Haiku to review it.
 
 Review runs as a loop between the reviewer and the worker that wrote the change. The worker keeps its context, so it fixes the findings without a fresh start. Do not spawn a new worker to fix findings.
 
-1. Spawn `contribute` with the `spawn` tool and wait for its report.
-2. Spawn `review` with the `spawn` tool, and set `worker` to the contribute thread id. Do not use `bb thread spawn` for the review. The tool picks the reviewer: Gemini 4 Argon (provider `acp-antigravity`) first, skipping any provider that is out of quota, and sends the loop protocol with the reviewer's prompt. If the reviewer stops on a quota, the tool spawns the next reviewer on another provider and messages you its thread id; wait on that one instead. Do not pass `agent=reviewer` or a model yourself.
-3. Wait on the reviewer only: `bb thread wait <reviewer>`, then `bb thread output <reviewer>`. Do not wait on the worker for the review.
+Do not poll. bb wakes you with a `[bb system] @thread:<id> completed` message when a spawned thread ends its turn. After spawning, when nothing else is ready, end your turn with a one-line status. No `bb thread wait` loops, sleeps, or heartbeat automations: a wake-up after the prompt cache expired (5 minutes) re-sends the whole conversation at cache-write price, so a 10-minute poll loop costs about 20 times a normal call. If you must block inside a turn, use `bb thread wait <id> --timeout 4m` and repeat it; never a longer timeout.
+
+1. Spawn `contribute` with the `spawn` tool, end your turn, and when bb wakes you read its report with `bb thread output <worker>`.
+2. Spawn `review` with the `spawn` tool, and set `worker` to the contribute thread id. Do not use `bb thread spawn` for the review. The tool picks the reviewer: Gemini 4 Argon (provider `acp-antigravity`) first, skipping any provider that is out of quota, and sends the loop protocol with the reviewer's prompt. If the reviewer stops on a quota, the tool spawns the next reviewer on another provider and messages you its thread id; use that one's report instead. Do not pass `agent=reviewer` or a model yourself. End your turn.
+3. Act on the reviewer only: when bb wakes you for it, read `bb thread output <reviewer>`. A wake-up from the worker's fix round (`FIXED round N` or `BLOCKED`) while the reviewer still runs needs no action; end your turn again.
    - `CLEAN`: the review passed. Continue to the acceptance checks.
    - `ESCALATE` with findings: the reviewer already used its two rounds. Decide what to do next. Tell the same worker with `bb thread tell <worker> --mode auto --message-file -`, or ask the user if the decision is theirs.
 

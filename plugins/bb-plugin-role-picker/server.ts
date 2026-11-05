@@ -221,9 +221,17 @@ function agentDefinition(
   };
 }
 
+// Waiting is the expensive part of orchestration: a wake-up after the provider's prompt cache
+// expired (5 minutes on Anthropic) re-sends the whole conversation at cache-write price.
+const ORCHESTRATOR_WAITING = [
+  "bb wakes you when a spawned thread ends its turn: you receive a [bb system] @thread:<id> completed message. So after spawning, when nothing else is ready, end your turn with a one-line status. Do not poll: no bb thread wait loops, sleeps, or heartbeat automations.",
+  "When woken, read bb thread output <id> before you use the report.",
+  "Use bb thread wait <id> --timeout 4m only when you must block inside a turn, and repeat it rather than raising the timeout: the prompt cache expires after 5 minutes without a model call, and every wake-up after that re-sends the whole conversation at full price.",
+].join(" ");
+
 const INTERVIEWER_PROCEDURE = [
   "Role: prompt generator. You work like a business analyst: you turn the user's idea into a prompt for an Orchestrator thread. You do not do the work.",
-  "Read-only. Do not create, edit, or delete files, do not commit, and run only read-only commands. Do not call spawn except with name explore, only in a non-Personal project, and only for a narrow question whose answer depends on codebase facts. Wait with bb thread wait <id>, then read bb thread output <id>. Never spawn contribute, plan, or review.",
+  "Read-only. Do not create, edit, or delete files, do not commit, and run only read-only commands. Do not call spawn except with name explore, only in a non-Personal project, and only for a narrow question whose answer depends on codebase facts. Wait with bb thread wait <id> --timeout 4m, repeated while the explorer is still running (never longer per call, so the prompt cache stays warm), then read bb thread output <id>. Never spawn contribute, plan, or review.",
   "Context first, briefly. Run bb status once (if bb fails, use node \"$BB_CLI\" status). If the project is Personal (proj_personal), there is no project, or the check fails, do not read, list, or search any files: interview only. In any other project, take one quick look inside the thread's workspace only (README, top-level layout, files plainly tied to the topic), then start asking. Never read or search outside the workspace (home folders, vaults, other repos), never grep recursively over large trees, and run no other bb diagnostics. Your first message to the user is a question.",
   "Ask through the AskUserQuestion tool (the question card), one question at a time, or at most three independent ones in one call. Never put a wall of questions in chat. Give 2-4 concrete options, put the one you recommend first and mark it, and let the user write their own answer. If the tool is missing, dismissed, or times out, ask that one question in your reply and end the turn.",
   "Order. Ask a question only once the answers it depends on are settled. Cover what the task needs: the goal and the problem behind it; who it is for and what outcome means success; scope and explicit non-goals; constraints (technology, compatibility, security, data, time, cost); acceptance criteria that can be checked; priorities and what to cut first; risks, unknowns, and dependencies. Keep a helicopter view. Go into technical detail only where it changes scope, risk, or acceptance.",
@@ -247,11 +255,11 @@ export function procedure(_providerId: string, role: Role): string {
     "You spawn only. Do not explore, plan, contribute, or review in this session.",
     "Call spawn with name explore, contribute, plan, or review. The assignment is only the task.",
     "Planning is the default: spawn plan before any contribute. Skip it only when ALL hold: the change is small (about one file or a few lines), the request is unambiguous, the approach is obvious with no design choices, and no exploration is needed to know where or what to edit. State the skip in one line. When in doubt, plan. Multi-file changes, new features, refactors, bug fixes with an unknown root cause, and cross-component behavior always get a plan. Sequence: explore (if needed), plan, contribute, review.",
-    "spawn returns the thread id as soon as the thread exists. Wait with bb thread wait <id>, then read the report with bb thread output <id>, before you use it.",
+    "spawn returns the thread id as soon as the thread exists. " + ORCHESTRATOR_WAITING,
     "Do not name the model and do not say which agent it is. spawn reads that from the agent file.",
     "explore may use the terminal. contribute is the only one that edits.",
-    "Review loop: spawn contribute first and wait for its report. Then spawn review with worker set to the contribute thread id. The reviewer sends defects straight to that worker, which fixes them and replies, up to two rounds. Wait on the reviewer alone and read its output: CLEAN, or ESCALATE with the findings left. On ESCALATE, tell the same worker what to do next, or ask the user.",
-    "Each review runs on a provider other than the worker's. If a reviewer stops on a provider quota, the plugin moves the review to the next provider and messages you the new reviewer thread id: wait on that one instead. If a reviewer ends in error and no such message comes, spawn review again with the same worker; spawn skips providers that are out of quota.",
+    "Review loop: spawn contribute first and read its report when bb wakes you. Then spawn review with worker set to the contribute thread id. The reviewer sends defects straight to that worker, which fixes them and replies, up to two rounds. A wake-up from the worker's fix round (output starting FIXED round or BLOCKED) while its reviewer is still running needs no action: end your turn again. Act on the reviewer's output alone: CLEAN, or ESCALATE with the findings left. On ESCALATE, tell the same worker what to do next, or ask the user.",
+    "Each review runs on a provider other than the worker's. If a reviewer stops on a provider quota, the plugin moves the review to the next provider and messages you the new reviewer thread id: use that one's report instead. If a reviewer ends in error and no such message comes, spawn review again with the same worker; spawn skips providers that are out of quota.",
     "Do not use the Task tool.",
   ].join(" ");
 }
@@ -267,7 +275,7 @@ function reviewerProtocol(workerId: string, replaces?: string): string {
     "Review the worker's diff against the assignment. Read files and run read-only git or diff commands only. Do not edit files.",
     "If you find no defects, end your turn with a final report that starts with CLEAN.",
     "If you find defects, send them to the worker in one message: bb thread tell " + workerId + " --mode auto --message-file -, with a quoted heredoc. The first line is `REVIEW round N/2 from thread:<your thread id>`, where N is 1 or 2. Then list each finding in severity order with path:line, the failure scenario, and the required correction.",
-    "Then run bb thread wait " + workerId + ", and read bb thread output " + workerId + ". Go on only when it starts with FIXED round N or BLOCKED for the round you sent. If it does not, wait again, at most two more times. If the worker is idle and still has no FIXED or BLOCKED reply for your round, treat the round as BLOCKED. Then review the changed code again.",
+    "Then run bb thread wait " + workerId + " --timeout 4m, and repeat it while the worker is still running; never wait longer than 4 minutes per call, because the prompt cache expires after 5 minutes without a model call and every later call re-sends the whole conversation at full price. Then read bb thread output " + workerId + ". Go on only when it starts with FIXED round N or BLOCKED for the round you sent. If it does not, wait again, at most two more times. If the worker is idle and still has no FIXED or BLOCKED reply for your round, treat the round as BLOCKED. Then review the changed code again.",
     "Send at most two REVIEW rounds. If findings remain after the second fix, or the worker replies BLOCKED, end your turn with a final report that starts with ESCALATE and lists the findings left.",
     "Send no other messages, acknowledgements, or thanks. Do not bb thread tell the orchestrator, even when bb status shows Parent notifications: stuck. Your final report is read by the orchestrator with bb thread output.",
   ].join("\n");
@@ -340,7 +348,7 @@ export default async function plugin(bb: BbPluginApi) {
     description:
       "Spawn one of the four agents: explore, contribute, plan, or review. Plan before any contribute unless the change is small and obvious. Returns the thread id immediately. A review takes the contribute thread id as worker and sends its defects straight to that worker. The orchestrator does no other work. The prompt generator role may call spawn with name explore only.",
     instructions:
-      "Orchestrators call spawn only. The only names are explore, contribute, plan, and review. contribute is the worker. Planning is the default: spawn plan before contribute, and skip it only when the change is small, unambiguous, obvious, and needs no exploration (state the skip in one line). spawn returns the thread id immediately. Review loop: spawn contribute and wait for its report; then spawn review with worker set to the contribute thread id. The reviewer sends defects to that worker and reports to you only at the end: CLEAN, or ESCALATE. Wait on the reviewer, then read bb thread output <id>, before using the report. The prompt generator role may call spawn with name explore only.",
+      "Orchestrators call spawn only. The only names are explore, contribute, plan, and review. contribute is the worker. Planning is the default: spawn plan before contribute, and skip it only when the change is small, unambiguous, obvious, and needs no exploration (state the skip in one line). spawn returns the thread id immediately, and bb wakes you when that thread ends its turn: end your turn instead of polling. Review loop: spawn contribute and read its report when woken; then spawn review with worker set to the contribute thread id. The reviewer sends defects to that worker and reports to you only at the end: CLEAN, or ESCALATE. Ignore wake-ups from the worker's fix rounds while its reviewer runs. Read bb thread output <id> before using a report. The prompt generator role may call spawn with name explore only.",
     presentation: {
       label: { pending: "Spawning agent", completed: "Spawned agent" },
     },
@@ -360,6 +368,14 @@ export default async function plugin(bb: BbPluginApi) {
           : "spawn is only for the orchestrator role, or explore for the prompt generator.");
       }
       const clean = (id: string) => id.trim().replace(/^@thread:/, "");
+      const whenDone = (id: string) => mode.role === "interviewer"
+        ? [
+          "Wait with bb thread wait " + id + " --timeout 4m, repeated while it is still running, then read bb thread output " + id + ".",
+        ]
+        : [
+          "bb wakes you with a [bb system] message when it ends its turn. Until then, end your turn if nothing else is ready; do not poll.",
+          "Then read the report before you use it: bb thread output " + id,
+        ];
       // Fallback for sessions whose published schema predates the worker parameter: accept a
       // first assignment line `worker: thr_xxx`. The line is removed from the assignment.
       const firstLine = name === "review" ? assignment.match(/^worker:[ \t]*(\S+)[ \t]*(?:\r?\n|$)/) : null;
@@ -397,10 +413,8 @@ export default async function plugin(bb: BbPluginApi) {
             text: [
               `Spawned review as ${spawned.id} on ${spawned.providerId}. Status: ${spawned.status}.`,
               "spawn returns when the thread exists. It does not wait for the agent.",
-              "If this reviewer stops on a provider quota, you get a message with the replacement reviewer id; wait on that one instead.",
-              "Wait, then read the report, before you use it:",
-              `bb thread wait ${spawned.id}`,
-              `bb thread output ${spawned.id}`,
+              "If this reviewer stops on a provider quota, you get a message with the replacement reviewer id; use that one's report instead.",
+              ...whenDone(spawned.id),
             ].join("\n"),
           }],
         };
@@ -418,7 +432,7 @@ export default async function plugin(bb: BbPluginApi) {
         projectId: parent.projectId,
         providerId: spec.providerId,
         parentThreadId: ctx.threadId,
-        parentNotifications: name === "contribute" ? "stuck" : "auto",
+        parentNotifications: "auto",
         permissionMode: "full",
         title: name,
         ...(parent.environmentId
@@ -438,9 +452,7 @@ export default async function plugin(bb: BbPluginApi) {
           text: [
             `Spawned ${name} as ${child.id}. Status: ${child.status}.`,
             "spawn returns when the thread exists. It does not wait for the agent.",
-            "Wait, then read the report, before you use it:",
-            `bb thread wait ${child.id}`,
-            `bb thread output ${child.id}`,
+            ...whenDone(child.id),
           ].join("\n"),
         }],
       };
@@ -493,7 +505,7 @@ export default async function plugin(bb: BbPluginApi) {
           projectId: record.projectId,
           providerId: spec.providerId,
           parentThreadId: record.orchestratorId,
-          parentNotifications: "stuck",
+          parentNotifications: "auto",
           permissionMode: "full",
           title: "review",
           ...(record.environmentId
@@ -535,7 +547,7 @@ export default async function plugin(bb: BbPluginApi) {
       ? [
           stopped,
           `The review moved to ${next.id} on ${next.providerId}, for worker ${record.worker}.`,
-          `Wait on the new reviewer: bb thread wait ${next.id}, then bb thread output ${next.id}.`,
+          `bb wakes you when the new reviewer ends its turn; then read bb thread output ${next.id}.`,
         ].join("\n")
       : [
           stopped,
