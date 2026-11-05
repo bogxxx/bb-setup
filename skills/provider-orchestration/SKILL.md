@@ -31,15 +31,15 @@ The reviewer is always a different model family from the worker that wrote the c
 
 The reviewer and the worker fix defects together. The reviewer does not report each defect to the orchestrator. The orchestrator does this:
 
-1. Spawn `contribute` (the worker), then wait for its report: `bb thread wait <worker>`, then `bb thread output <worker>`.
-2. Spawn `review` with `worker` set to the worker's thread id. The spawn tool picks the reviewer and its model for the provider, and it appends the loop protocol to the reviewer's prompt.
-3. Wait on the reviewer alone: `bb thread wait <reviewer>`, then read `bb thread output <reviewer>`.
+1. Spawn `contribute` (the worker) and end your turn. bb wakes you when it finishes; read `bb thread output <worker>`.
+2. Spawn `review` with `worker` set to the worker's thread id. The spawn tool picks the reviewer and its model for the provider, and it appends the loop protocol to the reviewer's prompt. End your turn.
+3. Act on the reviewer alone: when bb wakes you for it, read `bb thread output <reviewer>`. Wake-ups from the worker's fix rounds while the reviewer runs need no action.
    - `CLEAN`: the review passed. Run the acceptance checks.
    - `ESCALATE` plus findings: decide what to do next. Tell the same worker, or ask the user.
 
 Inside the loop, the reviewer checks the worker's diff. If there are defects, it sends them to the worker in `REVIEW round N/2 from thread:<reviewer id>`. The worker fixes only those findings, runs its checks, and replies `FIXED round N` (or `BLOCKED`) to the reviewer. The worker keeps its context, so it does not start over. The reviewer re-reviews. After round 2, if findings remain, it ends with `ESCALATE`.
 
-The spawn tool sets `parentNotifications: stuck` on `contribute` and `review`, so the orchestrator reads their reports with `bb thread wait` and `bb thread output`. `explore` and `plan` are unchanged.
+The spawn tool sets `parentNotifications: auto` on every spawned thread, so bb wakes the orchestrator when a child ends its turn. The orchestrator must not poll (`bb thread wait` loops, sleeps, heartbeat automations): a wake-up after the prompt cache expired re-sends the whole conversation at cache-write price. On epic #97 in the scour project, a 10-minute `bb thread wait --timeout 590` loop on Opus cost about 92 AIU per wake against about 4 for a warm call, 90% of the orchestrator's usage. The reviewer, which must block inside its turn, waits on the worker with `bb thread wait <worker> --timeout 4m`, repeated, so its cache stays warm.
 
 Messaging exception: the bb guide forbids messaging other threads unless the user asks. The user authorized this loop only: a reviewer may message the worker it reviews, and the worker may reply to that reviewer. No other thread-to-thread messages.
 
