@@ -7,9 +7,16 @@ $ClaudeDir = Join-Path $HOME '.claude'
 # Folders that bb / Claude read live from this repo through junctions.
 # Edit them in the repo (or through the live path, which is the same folder).
 $LinkedDirs = @(
-  @{ Live = "$BbDir\skills\provider-orchestration"; Repo = "$Repo\skills\provider-orchestration" },
   @{ Live = "$ClaudeDir\agents";                    Repo = "$Repo\claude\agents" }
 )
+# Every skill folder in the repo is linked, so new skills reach every machine.
+if (Test-Path "$Repo\skills") {
+  foreach ($d in Get-ChildItem "$Repo\skills" -Directory) {
+    if (Test-Path "$($d.FullName)\SKILL.md") {
+      $LinkedDirs += @{ Live = "$BbDir\skills\$($d.Name)"; Repo = $d.FullName }
+    }
+  }
+}
 
 # Single files cannot be linked without admin rights, so they are copied.
 # The newer copy wins in both directions.

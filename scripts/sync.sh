@@ -39,7 +39,6 @@ done
 # editing either side changes the same file. copilot-acp.cmd is Windows-only.
 # ~/.local/bin is on the bb daemon's PATH, so the bare "copilot-acp" resolves there.
 LINKS=(
-  "$BB_DIR/skills/provider-orchestration|$REPO/skills/provider-orchestration"
   "$CLAUDE_DIR/agents|$REPO/claude/agents"
   "$BB_DIR/AGENTS.md|$REPO/bb/AGENTS.md"
   "$CLAUDE_DIR/CLAUDE.md|$REPO/claude/CLAUDE.md"
@@ -55,6 +54,10 @@ LINKS=(
   "$HOME/.cursor/agents/cantrip-implement.md|$REPO/cursor/agents/cantrip-implement.md"
   "$HOME/.cursor/agents/cantrip-review.md|$REPO/cursor/agents/cantrip-review.md"
 )
+# Every skill folder in the repo is linked, so new skills reach every machine.
+for d in "$REPO"/skills/*/; do
+  [ -f "${d}SKILL.md" ] && LINKS+=("$BB_DIR/skills/$(basename "$d")|${d%/}")
+done
 
 # `bb` on PATH can fail silently when the CLI lost its executable bit; fall back to node.
 bb() {
