@@ -1,7 +1,7 @@
 ---
 name: worker
 description: Implementer. Makes every change the orchestrator assigns, end to end, including code, tests when asked, docs, config, ADRs and rules, git and GitHub operations, and generated artifacts. Follows local conventions and governing ADRs, runs the verification commands listed in its assignment, and reports what changed. Does not decide overall completion.
-model: gpt-6.1-terra
+model: gpt-6.1-terra-medium
 reasoningEffort: medium
 tools: [view, grep, glob, edit, create, skill, bash, powershell]
 agents: []

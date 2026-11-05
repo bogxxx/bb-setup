@@ -1,7 +1,7 @@
 ---
 name: planner
 description: Implementation planner. Investigates the repository and produces an ordered, evidence-grounded plan with verification steps for one assigned change. Does not write code.
-model: claude-opus-5.5
+model: claude-opus-5.5-medium
 tools: [view, grep, glob, bash, powershell]
 agents: []
 ---

@@ -1,7 +1,7 @@
 ---
 name: explorer
 description: Read-only investigator. Answers one focused question about repository behavior, architecture, dependencies, or execution paths with cited evidence. Never modifies code.
-model: claude-haiku-5.5
+model: claude-haiku-5.5-medium
 tools: [view, grep, glob, skill, bash, powershell]
 agents: []
 ---
