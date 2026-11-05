@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Independent static reviewer. Inspects a diff against the original requirements for correctness, regressions, security, concurrency, and contract violations. Read-only; never runs tests or modifies code.
-model: claude-opus-5.5
+model: claude-opus-5.5-medium
 reasoningEffort: medium
 tools: [view, grep, glob, skill, bash, powershell]
 agents: []

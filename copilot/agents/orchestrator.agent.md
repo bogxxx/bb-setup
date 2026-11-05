@@ -1,7 +1,7 @@
 ---
 name: orchestrator
 description: Goal-mode orchestrator. Owns a task from intent to verified delivery. Runs the Archgate preflight and closing loop, delegates all investigation, planning, implementation and review to explorer, planner, worker and reviewer agents, and confirms the result itself. Never edits files.
-model: claude-opus-5.5
+model: claude-opus-5.5-medium
 reasoningEffort: medium
 tools: [task, read_agent, write_agent, list_agents, view, grep, glob, skill, bash, read_bash, write_bash, stop_bash, powershell, read_powershell, write_powershell, stop_powershell]
 agents: [explorer, planner, worker, reviewer]
