@@ -29,11 +29,13 @@ $CopiedFiles = @(
   @{ Live = "$HOME\.copilot\agents\planner.agent.md";      Repo = "$Repo\copilot\agents\planner.agent.md" },
   @{ Live = "$HOME\.copilot\agents\worker.agent.md";       Repo = "$Repo\copilot\agents\worker.agent.md" },
   @{ Live = "$HOME\.copilot\agents\reviewer.agent.md";     Repo = "$Repo\copilot\agents\reviewer.agent.md" },
+  @{ Live = "$HOME\.copilot\agents\interviewer.agent.md";   Repo = "$Repo\copilot\agents\interviewer.agent.md" },
   @{ Live = "$HOME\.cursor\agents\cantrip-goal.md";        Repo = "$Repo\cursor\agents\cantrip-goal.md" },
   @{ Live = "$HOME\.cursor\agents\cantrip-explore.md";     Repo = "$Repo\cursor\agents\cantrip-explore.md" },
   @{ Live = "$HOME\.cursor\agents\cantrip-plan.md";        Repo = "$Repo\cursor\agents\cantrip-plan.md" },
   @{ Live = "$HOME\.cursor\agents\cantrip-implement.md";   Repo = "$Repo\cursor\agents\cantrip-implement.md" },
-  @{ Live = "$HOME\.cursor\agents\cantrip-review.md";      Repo = "$Repo\cursor\agents\cantrip-review.md" }
+  @{ Live = "$HOME\.cursor\agents\cantrip-review.md";      Repo = "$Repo\cursor\agents\cantrip-review.md" },
+  @{ Live = "$HOME\.cursor\agents\cantrip-interview.md";   Repo = "$Repo\cursor\agents\cantrip-interview.md" }
 )
 
 function Sync-File($live, $repo) {

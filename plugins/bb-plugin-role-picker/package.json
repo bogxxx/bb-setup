@@ -8,7 +8,7 @@
   },
   "bb": {
     "name": "Role Picker",
-    "description": "Choose regular work or the orchestrator in the composer.",
+    "description": "Choose regular work, the orchestrator, or the prompt generator in the composer.",
     "branding": {
       "icon": "Users"
     },

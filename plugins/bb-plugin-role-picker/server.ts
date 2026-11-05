@@ -5,8 +5,15 @@ import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { SHIPPED_AGENTS } from "./agents.generated.js";
 
-const roleSchema = z.enum(["regular", "orchestrator"]);
-type Role = z.infer<typeof roleSchema>;
+export const ROLES = ["regular", "orchestrator", "interviewer"] as const;
+const roleSchema = z.enum(ROLES);
+export type Role = z.infer<typeof roleSchema>;
+
+const ROLE_LABELS: Record<Role, string> = {
+  regular: "Regular",
+  orchestrator: "Orchestrator",
+  interviewer: "Prompt generator",
+};
 
 export const rpcContract = defineRpcContract({
   get_role: {
@@ -214,7 +221,19 @@ function agentDefinition(
   };
 }
 
-function procedure(_providerId: string, role: Role): string {
+const INTERVIEWER_PROCEDURE = [
+  "Role: prompt generator. You work like a business analyst: you turn the user's idea into a prompt for an Orchestrator thread. You do not do the work.",
+  "Read-only. Do not create, edit, or delete files, do not commit, and run only read-only commands. Do not call spawn except with name explore, and only when an answer depends on codebase facts you cannot get from a quick read yourself. Wait with bb thread wait <id>, then read bb thread output <id>. Never spawn contribute, plan, or review.",
+  "Ask through the AskUserQuestion tool (the question card), one question at a time, or at most three independent ones in one call. Never put a wall of questions in chat. Give 2-4 concrete options, put the one you recommend first and mark it, and let the user write their own answer. If the tool is missing, dismissed, or times out, ask that one question in your reply and end the turn.",
+  "Order. Ask a question only once the answers it depends on are settled. Cover what the task needs: the goal and the problem behind it; who it is for and what outcome means success; scope and explicit non-goals; constraints (technology, compatibility, security, data, time, cost); acceptance criteria that can be checked; priorities and what to cut first; risks, unknowns, and dependencies. Keep a helicopter view. Go into technical detail only where it changes scope, risk, or acceptance.",
+  "Challenge. Do not agree passively. Push back on vague goals, hidden assumptions, scope creep, criteria nobody can test, and answers that contradict earlier ones. Say why and offer a sharper alternative. Before you ask something, check whether the conversation or the repository already answers it. If so, state it as an assumption for the user to confirm instead of asking.",
+  "Stateless. Use only this conversation and what you read now. Do not save memories, notes, or files.",
+  "Stop when every section below is settled or the user has explicitly left it open. Summarise the decisions in a short list and ask once whether anything is wrong or missing.",
+  "Handoff. Show the final prompt in chat as one fenced markdown block. After it, write only one line: paste this into a new thread with Role set to Orchestrator. Do not start a thread and do not write a file. Sections: ## Goal (one or two sentences, the outcome and why); ## Context (background, current state, relevant repositories, paths, systems, links); ## Scope, with ### Non-goals; ## Constraints (technical, compatibility, security, process, deadlines); ## Acceptance criteria (numbered, each observable or testable); ## Open risks (each with the user's priority); ## Suggested first steps (2-5 opening moves for the Orchestrator: what to explore or plan first, not an implementation).",
+  "Write it for an Orchestrator that has not seen this conversation: self-contained, imperative, no filler, nothing addressed back to the user.",
+].join(" ");
+
+export function procedure(_providerId: string, role: Role): string {
   if (role === "regular") {
     return [
       "Role: regular.",
@@ -222,6 +241,7 @@ function procedure(_providerId: string, role: Role): string {
       "Do not call spawn.",
     ].join(" ");
   }
+  if (role === "interviewer") return INTERVIEWER_PROCEDURE;
   return [
     "You spawn only. Do not explore, plan, contribute, or review in this session.",
     "Call spawn with name explore, contribute, plan, or review. The assignment is only the task.",
@@ -268,11 +288,8 @@ export default async function plugin(bb: BbPluginApi) {
     defaultRole: {
       type: "select",
       label: "Default role for a new thread",
-      options: ["regular", "orchestrator"],
-      experimental_optionLabels: {
-        regular: "Regular",
-        orchestrator: "Orchestrator",
-      },
+      options: [...ROLES],
+      experimental_optionLabels: ROLE_LABELS,
       default: "regular",
     },
   });
@@ -320,9 +337,9 @@ export default async function plugin(bb: BbPluginApi) {
   bb.agents.registerTool({
     name: "spawn",
     description:
-      "Spawn one of the four agents: explore, contribute, plan, or review. Plan before any contribute unless the change is small and obvious. Returns the thread id immediately. A review takes the contribute thread id as worker and sends its defects straight to that worker. The orchestrator does no other work.",
+      "Spawn one of the four agents: explore, contribute, plan, or review. Plan before any contribute unless the change is small and obvious. Returns the thread id immediately. A review takes the contribute thread id as worker and sends its defects straight to that worker. The orchestrator does no other work. The prompt generator role may call spawn with name explore only.",
     instructions:
-      "Orchestrators call spawn only. The only names are explore, contribute, plan, and review. contribute is the worker. Planning is the default: spawn plan before contribute, and skip it only when the change is small, unambiguous, obvious, and needs no exploration (state the skip in one line). spawn returns the thread id immediately. Review loop: spawn contribute and wait for its report; then spawn review with worker set to the contribute thread id. The reviewer sends defects to that worker and reports to you only at the end: CLEAN, or ESCALATE. Wait on the reviewer, then read bb thread output <id>, before using the report.",
+      "Orchestrators call spawn only. The only names are explore, contribute, plan, and review. contribute is the worker. Planning is the default: spawn plan before contribute, and skip it only when the change is small, unambiguous, obvious, and needs no exploration (state the skip in one line). spawn returns the thread id immediately. Review loop: spawn contribute and wait for its report; then spawn review with worker set to the contribute thread id. The reviewer sends defects to that worker and reports to you only at the end: CLEAN, or ESCALATE. Wait on the reviewer, then read bb thread output <id>, before using the report. The prompt generator role may call spawn with name explore only.",
     presentation: {
       label: { pending: "Spawning agent", completed: "Spawned agent" },
     },
@@ -334,10 +351,13 @@ export default async function plugin(bb: BbPluginApi) {
     async execute({ name, assignment, worker: workerParam }, ctx) {
       const parent = await bb.sdk.threads.get({ threadId: ctx.threadId });
       const mode = await roleForThread(ctx.threadId);
-      if (mode.role !== "orchestrator") {
-        return { isError: true, content: [{ type: "text" as const, text: "spawn is only for the orchestrator role." }] };
-      }
       const fail = (text: string) => ({ isError: true, content: [{ type: "text" as const, text }] });
+      const allowed = mode.role === "orchestrator" || (mode.role === "interviewer" && name === "explore");
+      if (!allowed) {
+        return fail(mode.role === "interviewer"
+          ? "The prompt generator may spawn explore only."
+          : "spawn is only for the orchestrator role, or explore for the prompt generator.");
+      }
       const clean = (id: string) => id.trim().replace(/^@thread:/, "");
       // Fallback for sessions whose published schema predates the worker parameter: accept a
       // first assignment line `worker: thr_xxx`. The line is removed from the assignment.
@@ -570,7 +590,7 @@ export default async function plugin(bb: BbPluginApi) {
     const saved = readRole(context.pluginMetadata.role);
     const instructions = saved
       ? procedure(context.provider.id, saved)
-      : "No role is saved on this thread yet. Call role_choice and follow what it returns. Regular does the work in this session. Orchestrator delegates.";
+      : "No role is saved on this thread yet. Call role_choice and follow what it returns. Regular does the work in this session. Orchestrator delegates. Prompt generator interviews the user and writes a prompt for an Orchestrator thread; it does not edit.";
     // The tool list is fixed when the provider session is built, but the role can be saved
     // later (first dispatch, or a Role switch mid-session). Always expose spawn; execute()
     // refuses it unless the live role is orchestrator.

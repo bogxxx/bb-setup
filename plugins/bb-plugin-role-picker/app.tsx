@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { definePluginApp, useComposer, useRpc } from "@get-bb/plugin-sdk/app";
-import type { rpcContract } from "./server";
+import type { Role, rpcContract } from "./server";
 import "./composer-footer.css";
 
-type Role = "regular" | "orchestrator";
+const ROLE_OPTIONS: { value: Role; label: string }[] = [
+  { value: "regular", label: "Regular" },
+  { value: "orchestrator", label: "Orchestrator" },
+  { value: "interviewer", label: "Prompt generator" },
+];
 
 function threadIdOf(scope: { kind: string; threadId?: string }): string | null {
   if (scope.kind === "thread" || scope.kind === "queued-message") {
@@ -36,14 +40,17 @@ function RoleSelect({ threadId }: { threadId: string | null }) {
         className="h-6 max-w-36 rounded-md border border-border bg-background px-1.5 text-xs text-foreground"
         value={role}
         onChange={(event) => {
-          const next = event.target.value === "orchestrator" ? "orchestrator" : "regular";
+          const next = ROLE_OPTIONS.find((option) => option.value === event.target.value)?.value ?? "regular";
           const previous = role;
           setRole(next);
           rpc.call("set_role", { threadId, role: next }).catch(() => setRole(previous));
         }}
       >
-        <option value="regular">Regular</option>
-        <option value="orchestrator">Orchestrator</option>
+        {ROLE_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
       </select>
     </label>
   );

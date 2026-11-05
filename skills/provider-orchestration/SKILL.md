@@ -5,7 +5,7 @@ description: Route development work through the current provider's orchestrator,
 
 # Provider orchestration
 
-The composer Role control chooses regular or orchestrator. Call `role_choice` and follow it. Regular stays on this thread. Orchestrator follows the provider below.
+The composer Role control chooses regular, orchestrator, or prompt generator. Call `role_choice` and follow it. Regular stays on this thread. Orchestrator follows the provider below. Prompt generator (`interviewer`) interviews the user, spawns only `explore`, and writes a prompt for an Orchestrator thread; its agent files are `interviewer` (Claude, Copilot) and `cantrip-interview` (Cursor).
 
 Detect the provider with `bb thread show $env:BB_THREAD_ID --json` and read `providerId`. The orchestrator file is the system prompt for that role. A lookup stays on the current thread.
 
@@ -49,6 +49,8 @@ In-process subagents cannot reach a sibling. That covers the Claude Agent tool, 
 
 Orchestrator: `~/.cursor/agents/cantrip-goal.md`. It spawns `cantrip-explore`, `cantrip-plan`, `cantrip-implement`, and `cantrip-review`.
 
+Prompt generator: `~/.cursor/agents/cantrip-interview.md`, model `grok-4.7[reasoning_effort=xhigh,fast=false]`, readonly. It asks questions one at a time and delegates repository questions only to `cantrip-explore`.
+
 Leave these model lines as written:
 
 - cantrip-goal and cantrip-plan: `claude-opus-5-5[effort=medium,fast=false]`
@@ -65,6 +67,8 @@ There are two Copilot providers: `acp-github-copilot-cli` (the user's own accoun
 
 Orchestrator: `~/.copilot/agents/orchestrator.agent.md`. It spawns `explorer`, `planner`, `worker`, and `reviewer` from `~/.copilot/agents`. Select session option `agent=orchestrator` when starting a Copilot development thread.
 
+Prompt generator: `~/.copilot/agents/interviewer.agent.md` (`agent=interviewer`), model `gpt-6.1-sol-medium`, reasoning `medium`. It spawns only `explorer`.
+
 Confirmed catalog ids, all on the 1M context tier:
 
 | Role | Model | Reasoning |
@@ -74,6 +78,7 @@ Confirmed catalog ids, all on the 1M context tier:
 | planner | `claude-opus-5.5-medium` | medium |
 | worker | `gpt-6.1-terra-medium` | medium |
 | reviewer | `claude-opus-5.5-medium` | medium |
+| interviewer (prompt generator) | `gpt-6.1-sol-medium` | medium |
 
 When you start or spawn a Copilot thread with a model, use the 1M catalog id, which carries a `-medium` suffix and no `-standard` (`gpt-6.1-terra-medium`, `claude-opus-5.5-medium`, `claude-haiku-5.5-medium`), and set the effort with the reasoning level. A bare id such as `gpt-6.1-terra` is not in the catalog and the thread silently falls back to `auto`. A `-standard` id runs the 200k tier. The bare ids in `~/.copilot/agents/*.agent.md` front matter are Copilot's own and stay bare.
 
@@ -88,6 +93,7 @@ Confirmed catalog ids, effort `medium`:
 | Role | Model |
 | --- | --- |
 | orchestrator | `claude-opus-5-5` |
+| interviewer (prompt generator) | `claude-opus-5-5` |
 | planner | `claude-opus-5-5` |
 | explorer | `claude-haiku-5-5` |
 | worker | `claude-haiku-5-5` |

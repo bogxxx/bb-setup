@@ -48,11 +48,13 @@ LINKS=(
   "$HOME/.copilot/agents/planner.agent.md|$REPO/copilot/agents/planner.agent.md"
   "$HOME/.copilot/agents/worker.agent.md|$REPO/copilot/agents/worker.agent.md"
   "$HOME/.copilot/agents/reviewer.agent.md|$REPO/copilot/agents/reviewer.agent.md"
+  "$HOME/.copilot/agents/interviewer.agent.md|$REPO/copilot/agents/interviewer.agent.md"
   "$HOME/.cursor/agents/cantrip-goal.md|$REPO/cursor/agents/cantrip-goal.md"
   "$HOME/.cursor/agents/cantrip-explore.md|$REPO/cursor/agents/cantrip-explore.md"
   "$HOME/.cursor/agents/cantrip-plan.md|$REPO/cursor/agents/cantrip-plan.md"
   "$HOME/.cursor/agents/cantrip-implement.md|$REPO/cursor/agents/cantrip-implement.md"
   "$HOME/.cursor/agents/cantrip-review.md|$REPO/cursor/agents/cantrip-review.md"
+  "$HOME/.cursor/agents/cantrip-interview.md|$REPO/cursor/agents/cantrip-interview.md"
 )
 # Every skill folder in the repo is linked, so new skills reach every machine.
 for d in "$REPO"/skills/*/; do
