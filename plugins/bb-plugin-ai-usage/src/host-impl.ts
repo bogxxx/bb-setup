@@ -197,8 +197,8 @@ export async function relays(m: Machine, bin: string, aiHome: string | null): Pr
 }
 
 /** The tag of the latest release, from the releases/latest redirect, without GitHub's rate-limited API. */
-export async function latestTag(m: Machine): Promise<string> {
-  const r = await m.fetch(`https://github.com/${REPO}/releases/latest`, { redirect: "manual" });
+export async function latestTag(m: Machine, parent?: AbortSignal): Promise<string> {
+  const r = await m.fetch(`https://github.com/${REPO}/releases/latest`, { redirect: "manual", signal: boundSignal(60_000, parent) });
   const location = r.headers.get("location") ?? "";
   const tag = /\/releases\/tag\/(v\d+\.\d+\.\d+)$/.exec(location)?.[1];
   if (tag === undefined) throw new Error(`could not tell the latest ai-usage release (HTTP ${r.status})`);
@@ -244,49 +244,98 @@ export function windowsBinary(env: Env): string {
   return path.join(env.LOCALAPPDATA ?? path.join(env.USERPROFILE ?? "", "AppData", "Local"), "Programs", "ai-usage", "ai-usage.exe");
 }
 
-/** Windows: the release's install.ps1, then one collect and the scheduled task checked (registered when missing). */
-async function installWindows(m: Machine, req: InstallRequest): Promise<InstallOutput> {
-  const tag = await latestTag(m);
+/** The longest the whole Windows install may take; the server's install deadline is 30 minutes. */
+export const WINDOWS_INSTALL_BUDGET_MS = 25 * 60_000;
+/** The installer's own limit; collect and the schedule steps get what is left after it. */
+const WINDOWS_INSTALLER_MS = 18 * 60_000;
+const WINDOWS_COLLECT_MS = 5 * 60_000;
+const WINDOWS_STEP_MS = 60_000;
+/** A download that stalls gives up after this. */
+const DOWNLOAD_MS = 60_000;
+
+/** A signal that ends with the parent (when given) or after `ms`, whichever comes first. */
+export function boundSignal(ms: number, parent?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(ms);
+  return parent === undefined ? timeout : AbortSignal.any([parent, timeout]);
+}
+
+/** The environment for the steps after the installer: the team key and relay are not needed there, so they are not passed. */
+export function withoutSecrets(env: Env): Env {
+  const out: Env = { ...env };
+  delete out.AI_USAGE_TEAM_KEY;
+  delete out.AI_USAGE_RELAY;
+  return out;
+}
+
+export interface WindowsSteps {
+  run: typeof run;
+}
+
+/**
+ * Windows: the release's install.ps1, then one collect, then the scheduled task checked.
+ * Only the installer's and collect's standard error reaches the job log: their standard output
+ * is the first run's report, which stays out of the log. The steps share one budget.
+ */
+export async function installWindows(m: Machine, req: InstallRequest, steps: WindowsSteps = { run }): Promise<InstallOutput> {
+  const started = Date.now();
+  const left = (max: number) => Math.max(1_000, Math.min(max, WINDOWS_INSTALL_BUDGET_MS - (Date.now() - started)));
+  const tag = await latestTag(m, req.signal);
   req.onLine(`installing ai-usage ${tag}`);
-  const script = await m.fetch(`https://raw.githubusercontent.com/${REPO}/${tag}/install.ps1`);
+  const script = await m.fetch(`https://raw.githubusercontent.com/${REPO}/${tag}/install.ps1`, { signal: boundSignal(DOWNLOAD_MS, req.signal) });
   if (!script.ok) throw new Error(`could not download install.ps1 of ${tag} (HTTP ${script.status})`);
   const file = path.join(m.tempDir, `install-${tag}.ps1`);
   await writeFile(file, await script.text(), { mode: 0o600 });
   const env = windowsInstallEnv(m, req, tag);
+  const later = withoutSecrets(env);
   const tail: string[] = [];
-  const say = (raw: string) => {
+  const onErr = (raw: string, stream: "out" | "err") => {
+    if (stream !== "err") return;
     // eslint-disable-next-line no-control-regex
     const line = redact(raw.replace(/\x1b\[[0-9;]*[A-Za-z]/g, ""));
     tail.push(line);
     if (tail.length > 20) tail.shift();
     req.onLine(line);
   };
-  const r = await run("powershell", windowsInstallArgs(file), {
+  const fail = (code: number | null, message: string): InstallOutput => ({ ok: false, code, tag, message: redact(message) });
+
+  const installer = await steps.run("powershell", windowsInstallArgs(file), {
     env,
     cwd: m.tempDir,
     stdin: null,
-    timeoutMs: 29 * 60 * 1000,
+    timeoutMs: left(WINDOWS_INSTALLER_MS),
     signal: req.signal,
-    onLine: (raw) => say(raw),
+    onLine: onErr,
   });
-  const exe = windowsBinary(env);
-  let problem: string | null = null;
-  if (r.code !== 0 || r.timedOut) {
-    problem = r.timedOut ? "the installer did not finish in 29 minutes" : errorMessage(r.stderr.replace(/^ai-usage install: /gm, "ai-usage: "), "") || (tail.at(-1) ?? "the installer failed");
-  } else {
-    const collected = await run(exe, ["collect", "--quiet"], { env, cwd: m.tempDir, stdin: null, timeoutMs: 10 * 60 * 1000, signal: req.signal, onLine: (raw) => say(raw) });
-    if (collected.code !== 0 || collected.timedOut) problem = `the first collect failed: ${redact(collected.stderr.trim() || "ai-usage collect failed")}`;
-    else {
-      const status = await run(exe, ["schedule", "status"], { env, cwd: m.tempDir, stdin: null, timeoutMs: 60_000, signal: req.signal });
-      if (status.code !== 0 || !/^registered:/m.test(status.stdout)) {
-        const added = await run(exe, ["schedule", "install"], { env, cwd: m.tempDir, stdin: null, timeoutMs: 60_000, signal: req.signal });
-        if (added.code !== 0) problem = `the scheduled task could not be registered: ${redact(added.stderr.trim() || "ai-usage schedule install failed")}`;
-      }
-    }
+  if (installer.timedOut) return fail(installer.code, "the installer did not finish in 18 minutes");
+  if (installer.code !== 0) {
+    return fail(installer.code, errorMessage(installer.stderr.replace(/^ai-usage install: /gm, "ai-usage: "), "") || (tail.at(-1) ?? "the installer failed"));
   }
-  const ok = problem === null;
-  const message = problem ?? `installed ai-usage ${tag}`;
-  return { ok, code: r.code, tag, message: redact(message) };
+
+  const exe = windowsBinary(env);
+  const collected = await steps.run(exe, ["collect", "--quiet"], {
+    env: later,
+    cwd: m.tempDir,
+    stdin: null,
+    timeoutMs: left(WINDOWS_COLLECT_MS),
+    signal: req.signal,
+    onLine: onErr,
+  });
+  if (collected.timedOut) return fail(collected.code, "the first collect did not finish in 5 minutes");
+  if (collected.code !== 0) return fail(collected.code, `the first collect failed: ${collected.stderr.trim() || "ai-usage collect failed"}`);
+
+  // Registers the task only when status positively says it is not registered. A status that
+  // times out, fails, or says anything else leaves the task alone.
+  const status = await steps.run(exe, ["schedule", "status"], { env: later, cwd: m.tempDir, stdin: null, timeoutMs: left(WINDOWS_STEP_MS), signal: req.signal });
+  if (status.timedOut) return fail(status.code, "schedule status did not answer in 60 seconds, so the scheduled task was not changed");
+  if (status.code !== 0) return fail(status.code, "could not read the scheduled task's status, so it was not changed");
+  if (/^registered/m.test(status.stdout)) return { ok: true, code: 0, tag, message: `installed ai-usage ${tag}` };
+  if (!/^not registered\s*$/m.test(status.stdout)) {
+    return fail(status.code, "the scheduled task's status is unclear, so it was not changed");
+  }
+  const added = await steps.run(exe, ["schedule", "install"], { env: later, cwd: m.tempDir, stdin: null, timeoutMs: left(WINDOWS_STEP_MS), signal: req.signal });
+  if (added.timedOut) return fail(added.code, "schedule install did not finish in 60 seconds");
+  if (added.code !== 0) return fail(added.code, `the scheduled task could not be registered: ${added.stderr.trim() || "ai-usage schedule install failed"}`);
+  return { ok: true, code: 0, tag, message: `installed ai-usage ${tag}` };
 }
 
 /**

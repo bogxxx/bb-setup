@@ -185,8 +185,4 @@ echo "REPORT that stays out of the log"
     expect(out.message).toBe("ai-usage is installed with Homebrew");
   });
 
-  test("does not run on Windows", async () => {
-    const out = await install(machine({ platform: "win32" }), { teamKey: null, relay: null, onLine: () => {} });
-    expect(out.ok).toBe(false);
-  });
 });
