@@ -13,9 +13,10 @@ import { BusyError, Jobs } from "./src/jobs.js";
 import { withDeadline } from "./src/deadline.js";
 import { Refresher, refreshTargets } from "./src/schedule.js";
 import { autoInstallable, installRefusal, NOTHING_COLLECTED, phaseOf, type HostFacts } from "./src/phase.js";
-import { fillMatrixFromBurn } from "./src/burn-matrix.js";
+import { fillMatrixFromBurn, mergeCopilotColumns } from "./src/burn-matrix.js";
+import { applyCursorUsage } from "./src/cursor-usage.js";
 import { machineInMatrix, mergeMeasured } from "./src/local-providers.js";
-import { readReport, SchemaError, type Report } from "./src/report.js";
+import { readReport, SchemaError, type Report, type Usage } from "./src/report.js";
 import { readTaken } from "./src/take.js";
 import { rpcContract, type HostView, type JobKind, type JobView } from "./src/rpc.js";
 
@@ -206,6 +207,8 @@ export default async function plugin(bb: BbPluginApi) {
     alias: string;
     user: string;
     providers: MeasuredUsage["providers"];
+    /** Composer windows from the last reading that had them. Null when that machine has no Cursor database. */
+    cursorTokens?: Usage | null;
   }
 
   /**
@@ -225,8 +228,18 @@ export default async function plugin(bb: BbPluginApi) {
         .map(async (machine) => {
           try {
             const measured = await callHost("extras", {}, { hostId: machine.id, timeoutMs: 30_000 });
-            await bb.storage.kv.set(`snapshot:${machine.id}`, { at: Date.now(), name: machine.name, alias: measured.hostName, user: measured.user, providers: measured.providers } satisfies Snapshot);
-            return { id: machine.id, measured };
+            const previous = await bb.storage.kv.get<Snapshot>(`snapshot:${machine.id}`);
+            // A skipped composer read leaves the key off. Keep the last windows; an explicit null means no database.
+            const cursorTokens = measured.cursorTokens === undefined ? (previous?.cursorTokens ?? null) : measured.cursorTokens;
+            await bb.storage.kv.set(`snapshot:${machine.id}`, {
+              at: Date.now(),
+              name: machine.name,
+              alias: measured.hostName,
+              user: measured.user,
+              providers: measured.providers,
+              cursorTokens,
+            } satisfies Snapshot);
+            return { id: machine.id, measured: { ...measured, cursorTokens } };
           } catch (error) {
             bb.log.warn(`extras on ${machine.name} failed: ${error instanceof Error ? error.message : String(error)}`);
             return { id: machine.id, measured: null };
@@ -249,6 +262,14 @@ export default async function plugin(bb: BbPluginApi) {
       fillMatrixFromBurn(next, bb.server.experimental_dataDir, Date.now(), list.hosts.map((h) => ({ id: h.id, name: h.name })));
     } catch (error) {
       bb.log.warn(`burn tokens failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    // Burn does not fill Cursor, and a second Copilot seat must not stay its own column.
+    mergeCopilotColumns(next);
+    for (const machine of persistent) {
+      const reading = live.find((x) => x.id === machine.id)?.measured ?? null;
+      const snap = reading === null ? await bb.storage.kv.get<Snapshot>(`snapshot:${machine.id}`) : undefined;
+      const tokens = reading !== null ? (reading.cursorTokens ?? null) : (snap?.cursorTokens ?? null);
+      if (tokens !== null) applyCursorUsage(next, machine.id, tokens);
     }
     const stored = cache(reportHostId);
     stored.report = next;

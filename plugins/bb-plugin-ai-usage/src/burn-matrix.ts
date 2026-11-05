@@ -1,17 +1,19 @@
 // The Devices × subscriptions cells that Burn has already counted.
 // ai-usage's weighted burn is a different number; it is not added on top.
+// Cursor is not filled here: its cells come from composer rows.
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import type { MatrixCell, Report, Usage } from "./report.js";
-import { copilotProfiles, machineInMatrix } from "./local-providers.js";
+import { machineInMatrix } from "./local-providers.js";
 
 const require = createRequire(import.meta.url);
 
 /**
  * Burn's thread provider, then the matrix column it belongs in.
- * `counted` ledger rows are estimates and never reach this map: only `tokens`
- * and a log's utcDays become cells.
+ * `tokens` rows and a log's utcDays become cells. A non-pending `counted` row
+ * does too: its input, output, cache, and reasoning sit on the record. The
+ * dollar estimate Burn stores for that text is not a token count.
  */
 const COLUMN_OF: Record<string, string> = {
   "claude-code": "claude",
@@ -19,6 +21,10 @@ const COLUMN_OF: Record<string, string> = {
   "acp-github-copilot-cli": "copilot",
   "acp-cursor": "cursor",
   "acp-antigravity": "antigravity",
+  gemini: "gemini",
+  "acp-gemini": "gemini",
+  "gemini-cli": "gemini",
+  "google-gemini": "gemini",
 };
 
 const DAY_MS = 86_400_000;
@@ -90,27 +96,29 @@ function sumUsage(list: Usage[]): Usage {
   return out;
 }
 
-/** A second Copilot account's threads (acp-github-copilot-<key>) count under their own seat: copilot#<key>. */
+/** Every Copilot seat, including acp-github-copilot-<key>, shares the one Copilot column. */
 function columnOf(providerId: string): string | null {
-  for (const profile of copilotProfiles()) {
-    if (providerId === `acp-github-copilot-${profile.key}`) return `copilot#${profile.key}`;
-  }
+  if (providerId.startsWith("acp-github-copilot-")) return "copilot";
   const known = COLUMN_OF[providerId];
   if (known !== undefined) return known;
+  if (providerId.toLowerCase().includes("gemini")) return "gemini";
   if (providerId.startsWith("acp-")) return providerId.slice(4);
   return providerId === "" ? null : providerId;
 }
 
-/** The totals key of a matrix column: a second Copilot account's seat has its own. */
-function columnKey(column: { provider: string; name: string }): string {
-  if (column.provider !== "copilot") return column.provider;
-  const profile = copilotProfiles().find((item) => item.login !== null && item.login === column.name);
-  return profile === undefined ? column.provider : `copilot#${profile.key}`;
+function copilotColumn(provider: string): boolean {
+  return provider === "copilot" || provider.startsWith("copilot#");
+}
+
+/** The totals key of a matrix column. Copilot seats share one key. */
+function columnKey(column: { provider: string }): string {
+  return copilotColumn(column.provider) ? "copilot" : column.provider;
 }
 
 function bucket(totals: Map<string, Usage>, hostId: string, providerId: string): Usage | null {
   const column = columnOf(providerId);
-  if (column === null || hostId === "") return null;
+  // Cursor's counted text is the latest prompt, not the bill. Composer rows replace it.
+  if (column === null || column === "cursor" || hostId === "") return null;
   const id = `${hostId}\0${column}`;
   let usage = totals.get(id);
   if (usage === undefined) {
@@ -170,12 +178,25 @@ function readTotals(dataDir: string, now: number): Map<string, Usage> {
     for (const row of burn.all(
       `SELECT thread_id,
               json_extract(record, '$.at') AS at,
-              json_extract(record, '$.tokens.input') AS input,
-              json_extract(record, '$.tokens.output') AS output,
-              json_extract(record, '$.tokens.cacheRead') AS cache_read,
-              json_extract(record, '$.tokens.cacheWrite') AS cache_write,
-              json_extract(record, '$.tokens.reasoning') AS reasoning
-       FROM usage_records WHERE json_extract(record, '$.kind') = 'tokens'`,
+              CASE WHEN json_extract(record, '$.kind') = 'counted'
+                   THEN json_extract(record, '$.input')
+                   ELSE json_extract(record, '$.tokens.input') END AS input,
+              CASE WHEN json_extract(record, '$.kind') = 'counted'
+                   THEN json_extract(record, '$.output')
+                   ELSE json_extract(record, '$.tokens.output') END AS output,
+              CASE WHEN json_extract(record, '$.kind') = 'counted'
+                   THEN json_extract(record, '$.cacheRead')
+                   ELSE json_extract(record, '$.tokens.cacheRead') END AS cache_read,
+              CASE WHEN json_extract(record, '$.kind') = 'counted'
+                   THEN json_extract(record, '$.cacheWrite')
+                   ELSE json_extract(record, '$.tokens.cacheWrite') END AS cache_write,
+              CASE WHEN json_extract(record, '$.kind') = 'counted'
+                   THEN json_extract(record, '$.reasoning')
+                   ELSE json_extract(record, '$.tokens.reasoning') END AS reasoning
+       FROM usage_records
+       WHERE json_extract(record, '$.kind') = 'tokens'
+          OR (json_extract(record, '$.kind') = 'counted'
+              AND IFNULL(json_extract(record, '$.pending'), 0) NOT IN (1, 'true', '1'))`,
     )) {
       const threadId = String(row.thread_id);
       if (logged.has(threadId)) continue;
@@ -210,17 +231,13 @@ function ensureTokenColumns(report: Report, totals: Map<string, Usage>): void {
   for (const key of providers) {
     const hash = key.indexOf("#");
     const provider = hash === -1 ? key : key.slice(0, hash);
-    const login = hash === -1 ? null : (copilotProfiles().find((item) => item.key === key.slice(hash + 1))?.login ?? null);
     const group = report.team.providers.find((item) => item.provider === provider);
-    const account =
-      login !== null
-        ? group?.accounts.find((item) => item.name === login)
-        : (group?.accounts.find((item) => item.subscription) ?? group?.accounts[0]);
+    const account = group?.accounts.find((item) => item.subscription) ?? group?.accounts[0];
     const main = account?.quota?.windows.find((window) => window.main) ?? account?.quota?.windows[0];
     columns.push({
       provider,
       label: account?.label ?? null,
-      name: account?.name ?? login ?? provider,
+      name: account?.name ?? provider,
       no_quota: false,
       state: account?.state ?? "unknown",
       percent: main?.percent ?? null,
@@ -339,4 +356,51 @@ export function fillMatrixFromBurn(report: Report, dataDir: string, now: number,
     column.usage = sumUsage(report.team.matrix.rows.map((row) => cellShown(row.cells[index])));
     column.burn = null;
   }
+  mergeCopilotColumns(report);
+}
+
+/**
+ * One Copilot column. Cells on the same device row are added, and a dash
+ * (zero) plus a number is that number. The kept column is the first.
+ */
+export function mergeCopilotColumns(report: Report): void {
+  const columns = report.team.matrix.columns;
+  const indexes: number[] = [];
+  columns.forEach((column, index) => {
+    if (copilotColumn(column.provider)) indexes.push(index);
+  });
+  if (indexes.length <= 1) return;
+  const keep = indexes[0]!;
+  const drop = new Set(indexes.slice(1));
+  for (const row of report.team.matrix.rows) {
+    const usage = empty();
+    for (const index of indexes) {
+      const part = cellShown(row.cells[index]);
+      usage.today += part.today;
+      usage["7d"] += part["7d"];
+      usage["30d"] += part["30d"];
+      usage["90d"] += part["90d"];
+    }
+    while (row.cells.length < columns.length) row.cells.push(blankCell());
+    const cell = row.cells[keep] ?? blankCell();
+    cell.usage = usage;
+    cell.burn = null;
+    cell.burn_share = null;
+    row.cells[keep] = cell;
+    row.cells = row.cells.filter((_, index) => !drop.has(index));
+    row.usage = sumUsage(row.cells.map((item) => cellShown(item)));
+    row.burn = null;
+    row.burn_share = null;
+  }
+  const kept = columns[keep];
+  if (kept !== undefined) {
+    kept.provider = "copilot";
+    kept.burn = null;
+  }
+  report.team.matrix.columns = columns.filter((_, index) => !drop.has(index));
+  const index = report.team.matrix.columns.findIndex((column) => column.provider === "copilot");
+  const column = report.team.matrix.columns[index];
+  if (column === undefined) return;
+  column.usage = sumUsage(report.team.matrix.rows.map((row) => cellShown(row.cells[index])));
+  column.burn = null;
 }

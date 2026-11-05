@@ -86,6 +86,16 @@ export const relayOutput = z
 export const measuredWindow = z
   .object({ name: z.string(), percentUsed: z.number(), resetsAt: z.string().nullable() })
   .strict();
+/** Composer token windows. Absent when this refresh did not read them. */
+export const cursorTokens = z
+  .object({
+    today: z.number(),
+    "7d": z.number(),
+    "30d": z.number(),
+    "90d": z.number(),
+  })
+  .strict();
+
 export const measuredUsage = z
   .object({
     hostName: z.string(),
@@ -93,6 +103,7 @@ export const measuredUsage = z
     providers: z.array(
       z.object({ provider: z.string(), name: z.string(), plan: z.string().nullable(), windows: z.array(measuredWindow) }).strict(),
     ),
+    cursorTokens: cursorTokens.nullable().optional(),
   })
   .strict();
 export type MeasuredUsage = z.infer<typeof measuredUsage>;

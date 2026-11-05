@@ -475,49 +475,95 @@ function postJson(url: string, token: string): unknown {
 
 function family(id: string): string | null {
   if (id.startsWith("chat_") || id.startsWith("tab_")) return null;
+  if (isArgon(id)) return null;
   if (id.startsWith("gemini")) return "Gemini";
   if (id.startsWith("claude")) return "Claude";
   if (id.startsWith("gpt")) return "GPT";
   return null;
 }
 
-function safeValue(value: unknown, depth = 0): unknown {
-  if (value === null || typeof value === "boolean" || typeof value === "number") return value;
-  if (typeof value === "string") {
-    if (value.length > 80 || value.includes("@") || /\s/.test(value)) return `[string ${value.length}]`;
-    return value;
-  }
-  if (depth >= 3 || typeof value !== "object") return `[${typeof value}]`;
-  if (Array.isArray(value)) return value.slice(0, 8).map((item) => safeValue(item, depth + 1));
-  const out: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value)) {
-    if (/token|secret|auth|email|credential/i.test(key)) continue;
-    out[key] = safeValue(item, depth + 1);
-  }
-  return out;
+/** A quota bucket from retrieveUserQuota. Only these fields are read. */
+export interface GravityBucket {
+  modelId?: string;
+  remainingFraction?: number;
+  resetTime?: string;
+  /** Set when the payload itself says this window is used up. */
+  exhausted?: boolean;
 }
 
-/** Shape of the live model list, with secrets removed. */
-export function gravityBucketProbe(): unknown {
-  const token = antigravityRefresh();
-  if (token === null) return null;
-  const models = postJson("https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels", token);
-  if (models === null || typeof models !== "object") return { models: null };
-  const root = models as Record<string, unknown>;
-  const table = root.models;
-  if (table === null || typeof table !== "object" || Array.isArray(table)) return { top: Object.keys(root), models: safeValue(models) };
-  const rows = Object.entries(table as Record<string, unknown>).map(([id, value]) => {
-    const item = value !== null && typeof value === "object" ? (value as Record<string, unknown>) : {};
-    const quota = item.quotaInfo !== null && typeof item.quotaInfo === "object" ? (item.quotaInfo as Record<string, unknown>) : {};
-    return {
-      id,
-      keys: Object.keys(item).sort(),
-      remainingFraction: typeof quota.remainingFraction === "number" ? quota.remainingFraction : null,
-      resetTime: typeof quota.resetTime === "string" ? quota.resetTime : null,
-      quotaKeys: Object.keys(quota).sort(),
-    };
-  });
-  return { top: Object.keys(root), rows };
+function isArgon(id: string): boolean {
+  const key = id.toLowerCase();
+  return key === "argon" || key.endsWith("-argon") || key.includes("argon");
+}
+
+function markedExhausted(bucket: GravityBucket): boolean {
+  if (bucket.exhausted === true) return true;
+  const extra = bucket as GravityBucket & Record<string, unknown>;
+  for (const [key, value] of Object.entries(extra)) {
+    if (value === true && /exhaust|expired|depleted/i.test(key)) return true;
+  }
+  return false;
+}
+
+function resetPast(resetTime: string | undefined, now: number): boolean {
+  if (resetTime === undefined || resetTime === "") return false;
+  const at = Date.parse(resetTime);
+  return Number.isFinite(at) && at <= now;
+}
+
+/** Argon is its own window, at 0% left, when the bucket is used up, its reset has passed, or the payload says so. */
+function argonExhausted(bucket: GravityBucket, now: number): boolean {
+  return bucket.remainingFraction === 0 || resetPast(bucket.resetTime, now) || markedExhausted(bucket);
+}
+
+function usedPercent(fraction: number | undefined): number | null {
+  if (typeof fraction !== "number" || !Number.isFinite(fraction)) return null;
+  return Math.max(0, Math.min(100, (1 - fraction) * 100));
+}
+
+/**
+ * Gravity quota bars. Gemini, Claude, and GPT still merge when they agree.
+ * Argon, including gemini-4-argon, stays its own bar and is never folded into that merge.
+ */
+export function gravityWindows(buckets: readonly GravityBucket[], now = Date.now()): Window[] {
+  const groups = new Map<string, { used: number; reset: string | null }>();
+  let argon: { used: number; reset: string | null } | null = null;
+  for (const bucket of buckets) {
+    const id = bucket.modelId ?? "";
+    if (isArgon(id)) {
+      const used = argonExhausted(bucket, now) ? 100 : usedPercent(bucket.remainingFraction);
+      if (used === null) continue;
+      if (argon === null || used > argon.used) argon = { used, reset: bucket.resetTime ?? argon?.reset ?? null };
+      else if (argon.reset === null && bucket.resetTime) argon.reset = bucket.resetTime;
+      continue;
+    }
+    const name = family(id);
+    const used = usedPercent(bucket.remainingFraction);
+    if (name === null || used === null) continue;
+    const prev = groups.get(name);
+    if (prev === undefined || used > prev.used) groups.set(name, { used, reset: bucket.resetTime ?? prev?.reset ?? null });
+    else if (prev.reset === null && bucket.resetTime) prev.reset = bucket.resetTime;
+  }
+  const order = ["Gemini", "Claude", "GPT"];
+  const names = [...groups.keys()].sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  const same =
+    names.length > 1 &&
+    names.every((name) => {
+      const item = groups.get(name);
+      const first = groups.get(names[0] ?? "");
+      return item !== undefined && first !== undefined && Math.abs(item.used - first.used) < 1 && item.reset === first.reset;
+    });
+  const argonFirst = argon !== null && argon.used >= 100;
+  const windows =
+    same
+      ? [meter(names.join(", "), groups.get(names[0] ?? "")?.used ?? 0, groups.get(names[0] ?? "")?.reset ?? null, !argonFirst)]
+      : names.map((name, index) => meter(name, groups.get(name)?.used ?? 0, groups.get(name)?.reset ?? null, !argonFirst && index === 0));
+  if (argon !== null) {
+    const bar = meter("Argon", argon.used, argon.reset, argonFirst || windows.length === 0);
+    if (argonFirst) windows.unshift(bar);
+    else windows.push(bar);
+  }
+  return windows;
 }
 
 const ANTIGRAVITY_SIGNED_OUT = "Antigravity is installed, but its sign-in could not be read.";
@@ -533,33 +579,13 @@ function antigravity(device: string): TeamAccount | null {
     return antigravityCache;
   }
   const quota = (token === null ? null : postJson("https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota", token)) as {
-    buckets?: { modelId?: string; remainingFraction?: number; resetTime?: string }[];
+    buckets?: GravityBucket[];
   } | null;
   const plan = (token === null ? null : postJson("https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist", token)) as {
     paidTier?: { name?: string };
     currentTier?: { name?: string };
   } | null;
-  const groups = new Map<string, { used: number; reset: string | null }>();
-  for (const bucket of quota?.buckets ?? []) {
-    const name = family(bucket.modelId ?? "");
-    if (name === null || bucket.remainingFraction === undefined) continue;
-    const used = Math.max(0, Math.min(100, (1 - bucket.remainingFraction) * 100));
-    const prev = groups.get(name);
-    if (prev === undefined || used > prev.used) groups.set(name, { used, reset: bucket.resetTime ?? prev?.reset ?? null });
-    else if (prev.reset === null && bucket.resetTime) prev.reset = bucket.resetTime;
-  }
-  const order = ["Gemini", "Claude", "GPT"];
-  const names = [...groups.keys()].sort((a, b) => order.indexOf(a) - order.indexOf(b));
-  const same =
-    names.length > 1 &&
-    names.every((name) => {
-      const item = groups.get(name);
-      const first = groups.get(names[0] ?? "");
-      return item !== undefined && first !== undefined && Math.abs(item.used - first.used) < 1 && item.reset === first.reset;
-    });
-  const windows = same
-    ? [meter(names.join(", "), groups.get(names[0] ?? "")?.used ?? 0, groups.get(names[0] ?? "")?.reset ?? null, true)]
-    : names.map((name) => meter(name, groups.get(name)?.used ?? 0, groups.get(name)?.reset ?? null, name === names[0]));
+  const windows = gravityWindows(quota?.buckets ?? []);
   const planName = plan?.paidTier?.name || plan?.currentTier?.name || null;
   const label = email ?? planName ?? "Gravity";
   antigravityAt = Date.now();
@@ -619,13 +645,16 @@ export function machineInMatrix(report: Report, hostName: string, user: string, 
 }
 
 /**
- * A seat with no token series still gets its column, so it is visible: Copilot and Cursor have
- * no token series here. Their cells stay empty and show the en dash; the quota is on the card.
+ * Copilot and Cursor get a column even before token counts arrive. Every Copilot
+ * seat shares that one column; a second account does not add another. Cursor's
+ * numbers come from composer rows, not from Burn. Antigravity is not an empty
+ * seat: a Gravity column with no counted tokens would be only dashes.
  */
 function seatInMatrix(report: Report, provider: string, name: string, state: string): void {
   if (provider !== "copilot" && provider !== "cursor") return;
   const columns = report.team.matrix.columns;
-  if (!columns.some((c) => c.provider === provider && c.name === name)) {
+  const sameSeat = (c: { provider: string; name: string }) => c.provider === provider && (provider === "copilot" || c.name === name);
+  if (!columns.some(sameSeat)) {
     columns.push({
       provider,
       label: null,

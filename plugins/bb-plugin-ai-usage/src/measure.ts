@@ -7,7 +7,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import { readCursorUsage } from "./cursor-disk.js";
 import { copilotProfileQuota, copilotProfiles, quotaLogins } from "./local-providers.js";
+import type { Usage } from "./report.js";
 
 export interface MeasuredWindow {
   name: string;
@@ -27,6 +29,11 @@ export interface MeasuredUsage {
   hostName: string;
   user: string;
   providers: MeasuredProvider[];
+  /**
+   * Cursor composer windows. Null when this machine has no Composer database.
+   * Omitted when the reading was skipped, so the last figure can stay.
+   */
+  cursorTokens?: Usage | null;
 }
 
 function windowName(seconds: number): string {
@@ -422,5 +429,9 @@ async function measureNow(budgetMs: number): Promise<MeasuredUsage> {
   } catch {
     // A provider auth file was unreadable.
   }
-  return { hostName: os.hostname(), user: os.userInfo().username, providers };
+  // The composer scan is local. Skip it only when the budget is already gone,
+  // and omit the field so a skipped read does not wipe the last figure.
+  const reading: MeasuredUsage = { hostName: os.hostname(), user: os.userInfo().username, providers };
+  if (stepLimit(5_000) !== null) reading.cursorTokens = readCursorUsage(Date.now());
+  return reading;
 }

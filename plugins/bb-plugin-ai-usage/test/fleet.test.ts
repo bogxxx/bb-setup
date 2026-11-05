@@ -22,7 +22,12 @@ const NOW = Date.parse("2026-11-04T12:00:00Z");
 const TODAY = Date.parse("2026-11-04T09:00:00Z");
 
 /** A data folder with BB's host and thread tables and Burn's token records. */
-function dataFolder(hosts: [string, string][], threads: [string, string, string][], tokens: [string, number][]): string {
+function dataFolder(
+  hosts: [string, string][],
+  threads: [string, string, string][],
+  tokens: [string, number][],
+  counted: { threadId: string; record: Record<string, unknown> }[] = [],
+): string {
   const dir = mkdtempSync(path.join(os.tmpdir(), "ai-usage-fleet-"));
   mkdirSync(path.join(dir, "plugins", "burn"), { recursive: true });
   const bb = new DatabaseSync(path.join(dir, "bb.db"));
@@ -42,6 +47,9 @@ function dataFolder(hosts: [string, string][], threads: [string, string, string]
   burn.exec("CREATE TABLE usage_records (thread_id TEXT, record TEXT);");
   for (const [threadId, input] of tokens) {
     burn.prepare("INSERT INTO usage_records VALUES (?, ?)").run(threadId, JSON.stringify({ kind: "tokens", at: TODAY, tokens: { input } }));
+  }
+  for (const row of counted) {
+    burn.prepare("INSERT INTO usage_records VALUES (?, ?)").run(row.threadId, JSON.stringify(row.record));
   }
   burn.close();
   return dir;
@@ -87,6 +95,82 @@ describe("burn fill", () => {
       const cpcRow = report.team.matrix.rows.find((r) => r.device_id === cpc.id);
       expect(cpcRow).toBeDefined();
       expect(cpcRow!.cells[columnOf(report, "copilot")]!.usage["7d"]).toBe(104_000_000);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a counted cursor row does not fill the matrix", () => {
+    const dir = dataFolder(
+      [[predator.id, predator.name]],
+      [
+        ["t1", "acp-cursor", predator.id],
+        ["t2", "acp-cursor", predator.id],
+      ],
+      [],
+      [
+        {
+          threadId: "t1",
+          record: { kind: "counted", at: TODAY, input: 100, output: 40, cacheRead: 5, cacheWrite: 3, reasoning: 2 },
+        },
+        { threadId: "t1", record: { kind: "counted", pending: true, at: TODAY, input: 9_000_000, output: 1, reasoning: 1 } },
+        { threadId: "t2", record: { kind: "counted", at: TODAY, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 } },
+      ],
+    );
+    try {
+      const report = fresh();
+      machineInMatrix(report, predator.name, "leo", predator.id);
+      fillMatrixFromBurn(report, dir, NOW, [predator]);
+      expect(report.team.matrix.columns.some((c) => c.provider === "cursor")).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("copilot seats from different accounts sum into one column", () => {
+    const dir = dataFolder(
+      [[predator.id, predator.name]],
+      [
+        ["t1", "acp-github-copilot-cli", predator.id],
+        ["t2", "acp-github-copilot-ssgia", predator.id],
+      ],
+      [
+        ["t1", 800_000],
+        ["t2", 5_000],
+      ],
+    );
+    try {
+      const report = fresh();
+      machineInMatrix(report, predator.name, "leo", predator.id);
+      fillMatrixFromBurn(report, dir, NOW, [predator]);
+      const copilot = report.team.matrix.columns.filter((c) => c.provider === "copilot");
+      expect(copilot).toHaveLength(1);
+      expect(report.team.matrix.rows[0]!.cells[columnOf(report, "copilot")]!.usage["7d"]).toBe(805_000);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a counted gemini or antigravity row fills that column", () => {
+    const dir = dataFolder(
+      [[predator.id, predator.name]],
+      [
+        ["t1", "gemini", predator.id],
+        ["t2", "acp-antigravity", predator.id],
+      ],
+      [],
+      [
+        { threadId: "t1", record: { kind: "counted", at: TODAY, input: 80, output: 20, cacheRead: 0, cacheWrite: 0, reasoning: 0 } },
+        { threadId: "t2", record: { kind: "counted", at: TODAY, input: 10, output: 5, cacheRead: 1, cacheWrite: 0, reasoning: 4 } },
+      ],
+    );
+    try {
+      const report = fresh();
+      machineInMatrix(report, predator.name, "leo", predator.id);
+      fillMatrixFromBurn(report, dir, NOW, [predator]);
+      const row = report.team.matrix.rows[0]!;
+      expect(row.cells[columnOf(report, "gemini")]!.usage["7d"]).toBe(100);
+      expect(row.cells[columnOf(report, "antigravity")]!.usage["7d"]).toBe(20);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
