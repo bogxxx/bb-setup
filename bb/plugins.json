@@ -8,7 +8,8 @@
     {
       "id": "agent-traces",
       "source": "git:https://github.com/charpeni/bb-plugins.git@semver:agent-traces/:1.0.0",
-      "enabled": true
+      "enabled": true,
+      "subdirectory": "plugins/agent-traces"
     },
     {
       "id": "ai-usage",
@@ -23,12 +24,14 @@
     {
       "id": "claude-subagents",
       "source": "https://github.com/bogxxx/bb-setup.git",
-      "enabled": true
+      "enabled": true,
+      "subdirectory": "plugins/bb-plugin-claude-subagents"
     },
     {
       "id": "role-picker",
       "source": "https://github.com/bogxxx/bb-setup.git",
-      "enabled": true
+      "enabled": true,
+      "subdirectory": "plugins/bb-plugin-role-picker"
     }
   ],
   "builtinsEnabled": {
