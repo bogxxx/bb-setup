@@ -313,11 +313,17 @@ function antigravityStateFile(): string | null {
   return files.find((file) => file !== "" && existsSync(file)) ?? null;
 }
 
+/** %LOCALAPPDATA%, or its default under the profile on Windows when the variable is unset. */
+function localAppData(): string | undefined {
+  return process.env.LOCALAPPDATA ?? (process.platform === "win32" ? path.join(os.homedir(), "AppData", "Local") : undefined);
+}
+
 function antigravityPresent(): boolean {
   const home = os.homedir();
+  const local = localAppData();
   const markers = [
-    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "Programs", "Antigravity", "Antigravity.exe") : "",
-    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "agy", "bin", "agy.exe") : "",
+    local === undefined ? "" : path.join(local, "Programs", "Antigravity", "Antigravity.exe"),
+    local === undefined ? "" : path.join(local, "agy", "bin", "agy.exe"),
     "/Applications/Antigravity.app",
     path.join(home, "Applications", "Antigravity.app"),
     path.join(home, ".local", "bin", "agy"),
@@ -840,10 +846,13 @@ export function joinGravityWindows(agy: readonly Window[], models: readonly Wind
 
 /** `agy -p "/quota"` on this machine, as text. It prints the limits without a model turn. Empty when agy is missing, fails, or takes over 20s. */
 function agyQuotaText(): string {
+  const limit = stepLimit(20_000);
+  if (limit === null) return "";
   const home = os.homedir();
-  const candidates = [path.join(home, ".local", "bin", "agy"), process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "agy", "bin", "agy.exe") : ""];
+  const local = localAppData();
+  const candidates = [path.join(home, ".local", "bin", "agy"), local === undefined ? "" : path.join(local, "agy", "bin", "agy.exe")];
   const bin = candidates.find((file) => file !== "" && existsSync(file)) ?? "agy";
-  const run = spawnSync(bin, ["-p", "/quota"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 20_000, windowsHide: true });
+  const run = spawnSync(bin, ["-p", "/quota"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: limit, windowsHide: true });
   if (run.error !== undefined || run.status !== 0) return "";
   return String(run.stdout ?? "");
 }
@@ -1003,7 +1012,8 @@ function antigravity(device: string): TeamAccount | null {
   if (antigravityCache !== null && Date.now() - antigravityAt < 5 * 60_000) return { ...antigravityCache, devices: [device] };
   const token = antigravityRefresh();
   const email = antigravityMail;
-  if (token === null && email === null) {
+  const agy = gravityAgyWindows(parseAgyQuota(agyQuotaText()));
+  if (token === null && email === null && agy.length === 0) {
     if (!antigravityPresent()) return null;
     antigravityAt = Date.now();
     antigravityCache = card("Antigravity", device, [], { no_reading: ANTIGRAVITY_SIGNED_OUT });
@@ -1019,7 +1029,6 @@ function antigravity(device: string): TeamAccount | null {
   const names = token === null ? new Map<string, string>() : gravityNames(token);
   const summary = token === null ? null : postJson("https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary", token);
   const buckets = quota?.buckets;
-  const agy = gravityAgyWindows(parseAgyQuota(agyQuotaText()));
   const windows = joinGravityWindows(agy, gravityWindows(Array.isArray(buckets) ? buckets : [], Date.now(), names), gravitySummaryWindows(summary));
   const planName = plan?.paidTier?.name || plan?.currentTier?.name || null;
   const label = email ?? planName ?? "Gravity";
