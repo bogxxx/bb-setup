@@ -4,6 +4,7 @@ import path from "node:path";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { SHIPPED_AGENTS } from "./agents.generated.js";
+import { parseQuotaBlock, quotaBlockEnd, type QuotaBlock } from "./lib/quota-block.js";
 
 export const ROLES = ["regular", "orchestrator", "interviewer"] as const;
 const roleSchema = z.enum(ROLES);
@@ -546,10 +547,13 @@ export default async function plugin(bb: BbPluginApi) {
   const blockKey = (providerId: string) => `quota-blocked:${providerId}`;
   const reviewKey = (threadId: string) => `review:${threadId}`;
 
-  async function providerAvailable(providerId: string): Promise<boolean> {
-    const until = await kv.get<number>(blockKey(providerId));
-    if (typeof until === "number") {
-      if (until > Date.now()) return false;
+  /** Why a provider is skipped for a review, or null when it can be tried. */
+  async function skipReason(providerId: string): Promise<string | null> {
+    const stored = await kv.get<unknown>(blockKey(providerId));
+    if (stored !== undefined && stored !== null) {
+      const block = parseQuotaBlock(stored);
+      const end = block ? quotaBlockEnd(block) : 0;
+      if (block && Date.now() < end) return `quota block until ${new Date(end).toISOString()}`;
       await kv.delete(blockKey(providerId));
     }
     // Best effort: a provider whose usage report shows a used-up window, or no usable login, is skipped.
@@ -559,13 +563,15 @@ export default async function plugin(bb: BbPluginApi) {
         new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
       ]);
       const entry = usage?.[providerId];
-      if (!entry) return true;
-      if (entry.status === "not_installed" || entry.status === "unauthenticated" || entry.status === "expired") return false;
-      if (entry.status === "ok" && entry.windows.some((w) => w.usedPercent >= 100)) return false;
+      if (!entry) return null;
+      if (entry.status === "not_installed" || entry.status === "unauthenticated" || entry.status === "expired") {
+        return `usage report says ${entry.status}`;
+      }
+      if (entry.status === "ok" && entry.windows.some((w) => w.usedPercent >= 100)) return "usage report says a window is used up";
     } catch {
       // No usage report for this provider; assume it is available.
     }
-    return true;
+    return null;
   }
 
   async function spawnReviewer(
@@ -575,7 +581,11 @@ export default async function plugin(bb: BbPluginApi) {
     for (let index = record.index; index < record.chain.length; index++) {
       const spec = reviewerAt(record, index);
       const providerId = spec.providerId;
-      if (!(await providerAvailable(providerId))) continue;
+      const skip = await skipReason(providerId);
+      if (skip) {
+        bb.log.info(`review skips ${providerId} (${skip}) for worker ${record.worker}`);
+        continue;
+      }
       const defined = spec.agent ? agentDefinition(spec.agent, (message) => bb.log.warn(message)) : undefined;
       const model = defined?.model ?? spec.model;
       const reasoningLevel = defined?.reasoningLevel ?? spec.reasoningLevel;
@@ -618,13 +628,15 @@ export default async function plugin(bb: BbPluginApi) {
     await kv.delete(reviewKey(threadId));
 
     const failedProvider = reviewerAt(record, record.index).providerId;
-    await kv.set(blockKey(failedProvider), until);
+    const block: QuotaBlock = { until, setAt: Date.now() };
+    await kv.set(blockKey(failedProvider), block);
+    const blockedUntil = new Date(quotaBlockEnd(block)).toISOString();
 
     // Stop the failed reviewer so a core retry after the window resets does not run a second review.
     await bb.sdk.threads.archive({ threadId }).catch(() => undefined);
 
     const next = await spawnReviewer({ ...record, index: record.index + 1 }, threadId);
-    const stopped = `Reviewer ${threadId} on ${failedProvider} stopped: provider quota reached (${reason}).`;
+    const stopped = `Reviewer ${threadId} on ${failedProvider} stopped: provider quota reached (${reason}). ${failedProvider} is skipped for reviews until ${blockedUntil}.`;
     const text = next
       ? [
           stopped,
