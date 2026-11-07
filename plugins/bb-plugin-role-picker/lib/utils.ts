@@ -1,10 +1,3 @@
-/** Host id of the source marked default, if there is one. */
-export function defaultSourceHostId(
-  sources: readonly { isDefault: boolean; hostId: string }[],
-): string | undefined {
-  return sources.find((source) => source.isDefault)?.hostId;
-}
-
 export function formatHomePathForDisplay(pathValue: string): string {
   const homePrefix =
     pathValue.match(/^\/Users\/[^/]+(?=\/|$)/)?.[0] ??

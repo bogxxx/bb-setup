@@ -5,7 +5,7 @@ import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { SHIPPED_AGENTS } from "./agents.generated.js";
 import { parseQuotaBlock, quotaBlockEnd, type QuotaBlock } from "./lib/quota-block.js";
-import { defaultSourceHostId } from "./lib/utils.js";
+import { resolveReviewHostId, usageLimitsQuery, usageSkip } from "./lib/review-skip.js";
 
 export const ROLES = ["regular", "orchestrator", "interviewer"] as const;
 const roleSchema = z.enum(ROLES);
@@ -548,22 +548,8 @@ export default async function plugin(bb: BbPluginApi) {
   const blockKey = (providerId: string) => `quota-blocked:${providerId}`;
   const reviewKey = (threadId: string) => `review:${threadId}`;
 
-  /** Host the review runs on. Undefined falls back to the server-default usage query. */
-  async function reviewHostId(record: ReviewRecord): Promise<string | undefined> {
-    try {
-      if (record.environmentId) {
-        const environment = await bb.sdk.environments.get({ environmentId: record.environmentId });
-        return environment.hostId || undefined;
-      }
-      const project = await bb.sdk.projects.get({ projectId: record.projectId });
-      return defaultSourceHostId(project.sources) || undefined;
-    } catch {
-      return undefined;
-    }
-  }
-
   /** Why a provider is skipped for a review, or null when it can be tried. */
-  async function skipReason(providerId: string, hostId?: string): Promise<string | null> {
+  async function skipReason(providerId: string, hostId: string | null): Promise<string | null> {
     const stored = await kv.get<unknown>(blockKey(providerId));
     if (stored !== undefined && stored !== null) {
       const block = parseQuotaBlock(stored);
@@ -572,17 +558,13 @@ export default async function plugin(bb: BbPluginApi) {
       await kv.delete(blockKey(providerId));
     }
     // Best effort: a provider whose usage report shows a used-up window, or no usable login, is skipped.
+    // hostId is the machine the reviewer will run on. Without one, install status says nothing about that machine.
     try {
       const usage = await Promise.race([
-        bb.sdk.system.usageLimits({ providerId, ...(hostId ? { hostId } : {}) }),
+        bb.sdk.system.usageLimits(usageLimitsQuery(providerId, hostId)),
         new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
       ]);
-      const entry = usage?.[providerId];
-      if (!entry) return null;
-      if (entry.status === "not_installed" || entry.status === "unauthenticated" || entry.status === "expired") {
-        return `usage report says ${entry.status}`;
-      }
-      if (entry.status === "ok" && entry.windows.some((w) => w.usedPercent >= 100)) return "usage report says a window is used up";
+      return usageSkip(usage?.[providerId], Boolean(hostId));
     } catch {
       // No usage report for this provider; assume it is available.
     }
@@ -593,18 +575,21 @@ export default async function plugin(bb: BbPluginApi) {
     record: ReviewRecord,
     replaces?: string,
   ): Promise<{ id: string; status: string; providerId: string } | null> {
-    let hostId: string | undefined;
+    let hostId: string | null = null;
     try {
-      hostId = await reviewHostId(record);
+      hostId = await resolveReviewHostId(record, {
+        getEnvironment: (environmentId) => bb.sdk.environments.get({ environmentId }),
+        getProject: (projectId) => bb.sdk.projects.get({ projectId }),
+      });
     } catch {
-      hostId = undefined;
+      hostId = null;
     }
     for (let index = record.index; index < record.chain.length; index++) {
       const spec = reviewerAt(record, index);
       const providerId = spec.providerId;
       const skip = await skipReason(providerId, hostId);
       if (skip) {
-        bb.log.info(`review skips ${providerId} (${skip}) for worker ${record.worker} host ${hostId ?? "default"}`);
+        bb.log.info(`review skips ${providerId} (${skip}) on ${hostId ?? "no resolved host"} for worker ${record.worker}`);
         continue;
       }
       const defined = spec.agent ? agentDefinition(spec.agent, (message) => bb.log.warn(message)) : undefined;
