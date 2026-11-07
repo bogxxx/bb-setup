@@ -178,7 +178,7 @@ function Banners({ view, report, now, reportAt }: { view: HostView; report: Repo
       </Banner>,
     );
   }
-  if (report !== null && view.error !== null && view.phase !== "offline") {
+  if (report !== null && view.error !== null && view.phase !== "offline" && view.phase !== "schema-mismatch") {
     out.push(
       <Banner key="refresh-failed" tone="tight">
         The last refresh failed{reportAt !== null ? `; the report is from ${ago(new Date(reportAt).toISOString(), now)}` : ""}. {view.error}

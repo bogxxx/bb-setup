@@ -1,7 +1,7 @@
 // A refresh never blanks or shrinks a loaded page: the page's report changes only
 // when a complete merged report is ready, a machine whose extras fail keeps its
 // last readings, and a failed refresh leaves the loaded report on the page.
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
 import demoTeam from "../demo/team.json" with { type: "json" };
 import { shownPhase } from "../src/phase";
 import { mergeMachine } from "../src/take";
@@ -44,6 +44,35 @@ describe("the shown report", () => {
     expect(reportForClient(shown, "an older hash")!.team.devices.length).toBeGreaterThan(0);
     expect(partial.team.devices.length).toBe(0);
   });
+
+  test("the same readings merged at different wall-clock times are the same report", () => {
+    const providers = [{ provider: "cursor", name: "Pro+", plan: "Pro+", windows: [{ name: "Auto", percentUsed: 30, resetsAt: null }] }];
+    const machine = { id: "host_cpc", name: "CPC-bohda" };
+    const snapAt = Date.parse("2026-11-07T10:00:00Z");
+    const hashAt = (now: number, live: boolean) => {
+      setSystemTime(new Date(now));
+      const r = fresh();
+      mergeMachine(r, machine, live ? { hostName: "cpc-bohda", user: "bohdkrec", providers } : null, { at: snapAt, alias: "cpc-bohda", user: "bohdkrec", providers }, "");
+      return contentHash(r);
+    };
+    expect(hashAt(Date.parse("2026-11-07T10:05:00Z"), true)).toBe(hashAt(Date.parse("2026-11-07T11:40:00Z"), true));
+    expect(hashAt(Date.parse("2026-11-07T10:05:00Z"), false)).toBe(hashAt(Date.parse("2026-11-07T11:40:00Z"), false));
+    // Real content still shows: a changed percent is a new report.
+    const moved = fresh();
+    mergeMachine(moved, machine, null, { at: snapAt, alias: "cpc-bohda", user: "bohdkrec", providers: [{ ...providers[0]!, windows: [{ name: "Auto", percentUsed: 31, resetsAt: null }] }] }, "");
+    expect(contentHash(moved)).not.toBe(hashAt(Date.parse("2026-11-07T10:05:00Z"), false));
+  });
+
+  test("a read that restamps only its times and ages is the same report", () => {
+    const a = fresh();
+    const b = structuredClone(a);
+    b.generated_at = "2030-01-01T00:00:00Z";
+    for (const d of b.team.devices) d.age_seconds += 600;
+    for (const p of b.team.providers) for (const acc of p.accounts) if (acc.quota !== null) acc.quota.age_seconds += 600;
+    expect(contentHash(a)).toBe(contentHash(b));
+  });
+
+  afterEach(() => setSystemTime());
 
   test("a client with no hash gets nothing before the first load and the report after it", () => {
     expect(reportForClient(EMPTY, null)).toBeNull();

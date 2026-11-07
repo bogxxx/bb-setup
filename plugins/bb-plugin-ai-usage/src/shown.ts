@@ -10,9 +10,30 @@ export interface Shown {
   reportAt: number | null;
 }
 
-/** A short hash of what the report says. generated_at is left out, so a read that says nothing new is no change. */
+/**
+ * A short hash of what the report says. The times and ages that every read restamps (generated_at, an
+ * account's quota reading time and age, a device's collection time and age) are left out, so a read
+ * that says nothing new is no change.
+ */
 export function contentHash(report: Report): string {
-  return createHash("sha256").update(JSON.stringify({ ...report, generated_at: "" })).digest("hex").slice(0, 32);
+  const stable: Report = {
+    ...report,
+    generated_at: "",
+    team: {
+      ...report.team,
+      devices: report.team.devices.map((d) => ({
+        ...d,
+        age_seconds: 0,
+        // A device from live extras has no collection time of its own; the time is stamped on each read.
+        collected_at: d.collector_version === "" && !d.old ? null : d.collected_at,
+      })),
+      providers: report.team.providers.map((p) => ({
+        ...p,
+        accounts: p.accounts.map((a) => ({ ...a, quota: a.quota === null ? null : { ...a.quota, observed_at: "", age_seconds: 0 } })),
+      })),
+    },
+  };
+  return createHash("sha256").update(JSON.stringify(stable)).digest("hex").slice(0, 32);
 }
 
 /** The shown report after a complete merge: the same state when nothing changed, else the merged report with its time. */

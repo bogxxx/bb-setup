@@ -154,6 +154,7 @@ export default async function plugin(bb: BbPluginApi) {
         return c.probe;
       })
       .finally(() => {
+        c.probedAt = Date.now();
         c.probing = null;
         bb.realtime.publish("changed", { hostId });
       });
@@ -173,13 +174,17 @@ export default async function plugin(bb: BbPluginApi) {
    * Takes a machine's report from report --json or collect --json. It becomes the local read that
    * attachMachines merges; the page's report is not touched here, so a failed read keeps the last one.
    */
-  function take(hostId: string, out: RunOutput): void {
+  function take(hostId: string, out: RunOutput): boolean {
     const c = cache(hostId);
-    c.reportCheckedAt = Date.now();
+    let taken = false;
     if (out.code === 0 && out.json !== null) {
       try {
         c.local = readTaken(out.json);
         c.reportState = { ok: true, schemaMismatch: false, nothingCollected: false, error: null };
+        c.probeError = null;
+        taken = true;
+        // A first load shows this machine's own read at once; the other machines are merged in when they answer.
+        if (c.report === null) Object.assign(c, nextShown(c, c.local, Date.now()));
       } catch (error) {
         c.reportState = {
           ok: false,
@@ -197,6 +202,7 @@ export default async function plugin(bb: BbPluginApi) {
       };
     }
     bb.realtime.publish("changed", { hostId });
+    return taken;
   }
 
   /** A machine's logins and row as they were at its last live reading, kept so it still shows when offline. */
@@ -287,6 +293,8 @@ export default async function plugin(bb: BbPluginApi) {
     }
     const reported = applyPoolExtraUsage(next, await poolAccounts());
     const stored = cache(reportHostId);
+    // A read taken or cleared while this merge ran supersedes it; its own merge comes next.
+    if (stored.local !== base) return;
     const shown = nextShown(stored, reported, Date.now());
     stored.report = shown.report;
     stored.hash = shown.hash;
@@ -305,17 +313,16 @@ export default async function plugin(bb: BbPluginApi) {
         bb.log.warn(`no probe of ${labelOf(hostId)} to run the report with: ${c.probeError ?? (probe === null ? "empty answer" : "ai-usage not installed")}`);
         return;
       }
-      take(hostId, await run(hostId, probe, ["report", "--json"], TIMEOUT.report, { json: true }));
-      await attachMachines(hostId);
+      if (take(hostId, await run(hostId, probe, ["report", "--json"], TIMEOUT.report, { json: true }))) await attachMachines(hostId);
     })()
       .catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
-        c.reportCheckedAt = Date.now();
         c.reportState = { ok: false, schemaMismatch: false, nothingCollected: false, error: message };
         bb.log.warn(`report of ${hostId} failed: ${message}`);
       })
       .finally(() => {
         c.refreshing = null;
+        c.reportCheckedAt = Date.now();
         bb.log.info(`refresh of ${labelOf(hostId)} finished`);
         bb.realtime.publish("changed", { hostId });
       });
@@ -360,7 +367,7 @@ export default async function plugin(bb: BbPluginApi) {
       app: p?.app ?? false,
       scheduleEntry: p?.scheduleEntry ?? false,
       auto: auto?.outcome === "installing" || auto?.outcome === "installed" || auto?.outcome === "failed",
-      error: f.report?.error ?? p?.error ?? f.probeError ?? null,
+      error: f.report?.ok === true ? null : (f.report?.error ?? p?.error ?? f.probeError ?? null),
     };
   }
 
@@ -397,9 +404,9 @@ export default async function plugin(bb: BbPluginApi) {
     log("collecting: reading the tools' logs, asking each tool for its quota, and reading the team");
     const out = await run(hostId, probe, ["collect", "--json"], TIMEOUT.collect, { json: true });
     if (out.code !== 0) throw new Error(out.message || "the run failed");
-    take(hostId, out);
+    const taken = take(hostId, out);
     await probeHost(hostId, true);
-    await attachMachines(hostId);
+    if (taken) await attachMachines(hostId);
     return "collected";
   }
 
@@ -531,8 +538,8 @@ export default async function plugin(bb: BbPluginApi) {
       const { id } = await resolve(hostId);
       if (id !== null) {
         const c = cache(id);
-        if (c.probe === null || Date.now() - c.probedAt > PROBE_TTL) void probeHost(id);
-        if (Date.now() - c.reportCheckedAt > REPORT_TTL) void refresh(id);
+        if (Date.now() - c.probedAt > PROBE_TTL) void probeHost(id);
+        if (Date.now() - c.reportCheckedAt > REPORT_TTL && jobs.latest(id)?.status !== "running") void refresh(id);
       }
       const c = id === null ? null : cache(id);
       return {
@@ -632,8 +639,7 @@ export default async function plugin(bb: BbPluginApi) {
           const said = check(await run(t.id, t.probe, ["update"], TIMEOUT.update));
           const p = await probeHost(t.id, true);
           if (p !== null) {
-            take(t.id, await run(t.id, p, ["report", "--json"], TIMEOUT.report, { json: true }));
-            await attachMachines(t.id);
+            if (take(t.id, await run(t.id, p, ["report", "--json"], TIMEOUT.report, { json: true }))) await attachMachines(t.id);
           }
           return said.split("\n").at(-1) ?? "updated";
         }),
@@ -675,6 +681,7 @@ export default async function plugin(bb: BbPluginApi) {
           c.local = null;
           c.report = null;
           c.hash = null;
+          c.reportAt = null;
           c.reportState = null;
           await probeHost(t.id, true);
           if (out.code !== 0) throw new Error(out.message || "some steps failed");
