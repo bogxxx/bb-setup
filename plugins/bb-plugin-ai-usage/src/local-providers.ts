@@ -559,10 +559,56 @@ function humanize(id: string): string {
   return out.join(" ");
 }
 
+interface Model {
+  key: string;
+  family: string;
+  /** How far up its family the model is: 0 is not a frontier candidate. */
+  tier: number;
+  version: number[];
+}
+
+/** The numbers in a model id, in order: "claude-opus-5-5" is [5, 5], "gemini-3.8-pro" is [3.8]. */
+function versionOf(id: string): number[] {
+  return (id.match(/\d+(\.\d+)?/g) ?? []).map(Number);
+}
+
+function compareVersions(a: number[], b: number[]): number {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const d = (a[i] ?? -1) - (b[i] ?? -1);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+/** Argon is Gemini's top tier, then Pro; Flash and Lite are not frontier. Claude's frontier is Opus. Every GPT model is a candidate. */
+function modelOf(key: string): Model | null {
+  const fam = family(key) ?? (isArgon(key) ? "Gemini" : null);
+  if (fam === null) return null;
+  let tier = 1;
+  if (fam === "Gemini") tier = isArgon(key) ? 2 : /(^|-)pro(-|$)/.test(key) ? 1 : 0;
+  else if (fam === "Claude") tier = /(^|-)opus(-|$)/.test(key) ? 1 : 0;
+  return { key, family: fam, tier, version: versionOf(key) };
+}
+
+/** Per family, the highest tier present, and within it the highest version (ties all kept). */
+function frontierKeys(models: readonly Model[]): Set<string> {
+  const out = new Set<string>();
+  for (const fam of new Set(models.map((m) => m.family))) {
+    const group = models.filter((m) => m.family === fam && m.tier > 0);
+    if (group.length === 0) continue;
+    const top = Math.max(...group.map((m) => m.tier));
+    const tiered = group.filter((m) => m.tier === top);
+    const best = tiered.reduce((a, b) => (compareVersions(b.version, a.version) > 0 ? b : a));
+    for (const m of tiered) if (compareVersions(m.version, best.version) === 0) out.add(m.key);
+  }
+  return out;
+}
+
 /**
  * One meter per model. Effort variants (`-low`, `-max`, ...) share a meter and show the worst of
- * them, with that bucket's reset. `names` maps a model id to its display name. Most used first,
- * then Gemini, Claude, GPT, then the rest; the first window is main.
+ * them, with that bucket's reset. `names` maps a model id to its display name. Only the frontier
+ * model of each family is shown, plus any other model that is used up. Most used first, the
+ * frontier rows before the used-up ones; then Gemini, Claude, GPT, then the rest; the first window is main.
  */
 export function gravityWindows(buckets: readonly GravityBucket[], now = Date.now(), names: ReadonlyMap<string, string> = new Map()): Window[] {
   const groups = new Map<string, { ids: string[]; used: number; reset: string | null }>();
@@ -583,12 +629,16 @@ export function gravityWindows(buckets: readonly GravityBucket[], now = Date.now
       }
     }
   }
-  const entries = [...groups.entries()].map(([key, group]) => {
-    const named = group.ids.map((id) => names.get(id)).find((name) => name !== undefined);
-    const label = named === undefined ? humanize(key) : named.replace(EFFORT_NAME_SUFFIX, "").trim();
-    const rank = FAMILY_ORDER.indexOf(family(key) ?? "");
-    return { key, label, ...group, rank: rank === -1 ? FAMILY_ORDER.length : rank };
-  });
+  const models = [...groups.keys()].map(modelOf).filter((m): m is Model => m !== null);
+  const frontier = frontierKeys(models);
+  const entries = [...groups.entries()]
+    .map(([key, group]) => {
+      const named = group.ids.map((id) => names.get(id)).find((name) => name !== undefined);
+      const label = named === undefined ? humanize(key) : named.replace(EFFORT_NAME_SUFFIX, "").trim();
+      const rank = FAMILY_ORDER.indexOf(family(key) ?? "");
+      return { key, label, ...group, rank: rank === -1 ? FAMILY_ORDER.length : rank, frontier: frontier.has(key) };
+    })
+    .filter((entry) => entry.frontier || entry.used >= 100);
   const labelCount = new Map<string, number>();
   for (const entry of entries) labelCount.set(entry.label, (labelCount.get(entry.label) ?? 0) + 1);
   // Unique labels claim their name first. A duplicated label falls back to the model id, and any
@@ -605,7 +655,7 @@ export function gravityWindows(buckets: readonly GravityBucket[], now = Date.now
   for (const entry of entries) if ((labelCount.get(entry.label) ?? 0) > 1) claim(entry.key, entry.key);
   const sorted = entries
     .map((entry) => ({ ...entry, name: claimed.get(entry.key) ?? entry.key }))
-    .sort((a, b) => b.used - a.used || a.rank - b.rank || a.name.localeCompare(b.name));
+    .sort((a, b) => Number(b.frontier) - Number(a.frontier) || b.used - a.used || a.rank - b.rank || a.name.localeCompare(b.name));
   return sorted.map((entry, i) => meter(entry.name, entry.used, entry.reset, i === 0));
 }
 

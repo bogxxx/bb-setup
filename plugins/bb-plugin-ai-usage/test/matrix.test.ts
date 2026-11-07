@@ -69,7 +69,8 @@ describe("argon quota", () => {
       const argon = windows.find((window) => window.name.endsWith("Argon"));
       expect(argon).toBeDefined();
       expect(percentLeft(argon!)).toBe(0);
-      expect(windows.filter((window) => window.name !== argon!.name).map((window) => percentLeft(window))).toEqual([100, 100, 100]);
+      // Argon is Gemini's frontier model, so Pro is hidden; the GPT model is the other frontier row.
+      expect(windows.filter((window) => window.name !== argon!.name).map((window) => percentLeft(window))).toEqual([100]);
       expect(windows.find((window) => window.name === "Gemini, Claude, GPT")).toBeUndefined();
       expect(windows[0]).toEqual(argon!);
     }
@@ -80,7 +81,7 @@ describe("argon quota", () => {
     const marked = gravityWindows([...healthy, { modelId: "gemini-4-argon", remainingFraction: 1, resetTime: reset, exhausted: true }], now);
     for (const windows of [past, marked]) {
       expect(percentLeft(windows.find((window) => window.name.endsWith("Argon"))!)).toBe(0);
-      expect(windows).toHaveLength(4);
+      expect(windows).toHaveLength(2);
     }
   });
 });

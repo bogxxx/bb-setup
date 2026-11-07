@@ -15,11 +15,44 @@ describe("gravityWindows", () => {
       ],
       now,
     );
-    expect(windows.map((w) => [w.name, w.percent, w.state, w.main])).toEqual([
-      ["Claude Opus 5.5", 100, "out", true],
-      ["Gemini 3.8 Flash", 50, "ok", false],
-    ]);
+    expect(windows.map((w) => [w.name, w.percent, w.state, w.main])).toEqual([["Claude Opus 5.5", 100, "out", true]]);
     expect(windows[0]?.resets_at).toBe(reset);
+  });
+
+  test("a model that is not frontier is hidden while it has some left, and shown after the frontier rows once used up", () => {
+    const buckets = [
+      { modelId: "claude-opus-5-5", remainingFraction: 0.5, resetTime: reset },
+      { modelId: "claude-sonnet-5-5", remainingFraction: 0.5, resetTime: reset },
+      { modelId: "gemini-3.8-flash", remainingFraction: 0.1, resetTime: reset },
+    ];
+    expect(gravityWindows(buckets, now).map((w) => w.name)).toEqual(["Claude Opus 5.5"]);
+    const exhausted = gravityWindows([...buckets, { modelId: "claude-sonnet-5-5", remainingFraction: 0, resetTime: reset }], now);
+    expect(exhausted.map((w) => [w.name, w.percent, w.main])).toEqual([
+      ["Claude Opus 5.5", 50, true],
+      ["Claude Sonnet 5.5", 100, false],
+    ]);
+    const marked = gravityWindows([...buckets, { modelId: "gemini-3.8-flash", remainingFraction: 1, resetTime: reset, exhausted: true }], now);
+    expect(marked.map((w) => w.name)).toEqual(["Claude Opus 5.5", "Gemini 3.8 Flash"]);
+  });
+
+  test("the highest version of the frontier tier wins: Opus 5.5 over Opus 4, Argon 4 over Pro 3", () => {
+    const opus = gravityWindows(
+      [
+        { modelId: "claude-opus-4-1", remainingFraction: 0.5, resetTime: reset },
+        { modelId: "claude-opus-5-5", remainingFraction: 0.5, resetTime: reset },
+      ],
+      now,
+    );
+    expect(opus.map((w) => w.name)).toEqual(["Claude Opus 5.5"]);
+    const gemini = gravityWindows(
+      [
+        { modelId: "gemini-3.8-pro", remainingFraction: 0.5, resetTime: reset },
+        { modelId: "gemini-4-argon", remainingFraction: 0.5, resetTime: reset },
+        { modelId: "gemini-3-argon", remainingFraction: 0.5, resetTime: reset },
+      ],
+      now,
+    );
+    expect(gemini.map((w) => w.name)).toEqual(["Gemini 4 Argon"]);
   });
 
   test("remainingFraction 0 is exhausted, with or without a reset time", () => {
@@ -131,33 +164,33 @@ describe("gravityWindows", () => {
 
   test("duplicate display names fall back to the model id", () => {
     const names = new Map([
-      ["gemini-3.8-flash", "Gemini Flash"],
-      ["gemini-3.8-pro", "Gemini Flash"],
+      ["claude-opus-5-5", "Top Model"],
+      ["gpt-oss-120b", "Top Model"],
     ]);
     const windows = gravityWindows(
       [
-        { modelId: "gemini-3.8-flash", remainingFraction: 0.5, resetTime: reset },
-        { modelId: "gemini-3.8-pro", remainingFraction: 0.5, resetTime: reset },
+        { modelId: "claude-opus-5-5", remainingFraction: 0.5, resetTime: reset },
+        { modelId: "gpt-oss-120b", remainingFraction: 0.5, resetTime: reset },
       ],
       now,
       names,
     );
-    expect(windows.map((w) => w.name).sort()).toEqual(["gemini-3.8-flash", "gemini-3.8-pro"]);
+    expect(windows.map((w) => w.name).sort()).toEqual(["claude-opus-5-5", "gpt-oss-120b"]);
   });
 
   test("a display name equal to another model's fallback id still gives unique names, and none is hidden", () => {
     const names = new Map([
-      ["gemini-3.8-flash", "Gemini Flash"],
-      ["gemini-3.8-pro", "Gemini Flash"],
-      ["gemini-3.8-lite", "gemini-3.8-pro"],
+      ["claude-opus-5-5", "Top Model"],
+      ["gpt-oss-120b", "Top Model"],
+      ["claude-sonnet-5-5", "claude-opus-5-5"],
     ]);
     const account = {
       quota: {
         windows: gravityWindows(
           [
-            { modelId: "gemini-3.8-flash", remainingFraction: 0.5, resetTime: reset },
-            { modelId: "gemini-3.8-pro", remainingFraction: 0.4, resetTime: reset },
-            { modelId: "gemini-3.8-lite", remainingFraction: 0.3, resetTime: reset },
+            { modelId: "claude-opus-5-5", remainingFraction: 0.5, resetTime: reset },
+            { modelId: "gpt-oss-120b", remainingFraction: 0.4, resetTime: reset },
+            { modelId: "claude-sonnet-5-5", remainingFraction: 0, resetTime: reset },
           ],
           now,
           names,
@@ -166,7 +199,7 @@ describe("gravityWindows", () => {
     } as unknown as TeamAccount;
     const all = account.quota?.windows.map((w) => w.name) ?? [];
     expect(new Set(all).size).toBe(3);
-    expect(all).toContain("gemini-3.8-pro");
+    expect(all).toContain("claude-opus-5-5");
     expect(limitingWindows(account)).toHaveLength(3);
   });
 
@@ -180,7 +213,7 @@ describe("gravityWindows", () => {
       ],
       now,
     );
-    expect(windows.map((w) => w.name).sort()).toEqual(["Claude Opus 5.5", "GPT-OSS 120B", "Gemini 3.8 Flash", "Gemini 4 Argon"].sort());
+    expect(windows.map((w) => w.name).sort()).toEqual(["Claude Opus 5.5", "GPT-OSS 120B", "Gemini 4 Argon"].sort());
   });
 
   test("limitingWindows puts the tightest meter first", () => {
@@ -193,7 +226,7 @@ describe("gravityWindows", () => {
       now,
     );
     const account = { quota: { windows } } as unknown as TeamAccount;
-    expect(limitingWindows(account).map((w) => w.name)).toEqual(["Claude Opus 5.5", "Gemini 3.8 Flash", "GPT-OSS 120B"]);
+    expect(limitingWindows(account).map((w) => w.name)).toEqual(["Claude Opus 5.5", "GPT-OSS 120B"]);
   });
 });
 
