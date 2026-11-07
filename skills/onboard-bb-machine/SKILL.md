@@ -46,7 +46,13 @@ Start-Process (Get-Command node).Source -WindowStyle Hidden -WorkingDirectory $d
 
 Nothing restarts it after a reboot. Offer to add a Startup entry with the same command (for example a `.cmd` in `shell:startup` that runs `powershell -WindowStyle Hidden -Command "Start-Process ..."`).
 
-To restart the daemon (needed after PATH changes), stop the node processes whose command line contains `bb-machines\bogxxx.getbb.app` or `install-machine-windows`, by PID, then start it again.
+To restart the daemon (needed after PATH changes), stop the node processes whose command line matches `bb-machines|install-machine-windows|bb-host-daemon`, by PID, then start it again:
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -match 'bb-machines|install-machine-windows|bb-host-daemon' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+```
+
+Before starting it again, reload PATH in the same shell (`$env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')`), so the daemon inherits the new entries.
 
 Verify:
 
@@ -60,7 +66,7 @@ The `bb` CLI under `<data>\npm\bb.cmd` returns `HTTP 401` on a machine that is o
 
 ## 4. GitHub Copilot CLI and sign-in
 
-On Windows install it with winget, not npm. The bb-setup launcher looks for `copilot.exe` on PATH and in `%LOCALAPPDATA%\GitHubCopilotCLI`. npm only provides `copilot.cmd`, which it does not find (set `COPILOT_BIN` if it has to stay that way).
+On Windows install it with winget, not npm. The bb-setup launcher looks for `copilot.exe` on PATH and in `%LOCALAPPDATA%\GitHubCopilotCLI`, which is where winget puts it. npm only provides `copilot.cmd`, which it does not find (set `COPILOT_BIN` if it has to stay that way). An npm install that is already there can stay; it does not get in the way.
 
 ```powershell
 winget install GitHub.Copilot
@@ -81,16 +87,20 @@ git clone https://github.com/bogxxx/bb-setup $HOME\src\bb-setup
 - The repo is public, so cloning needs no login.
 - `-SkipPlugins -SkipSettings`: plugins and plugin settings live on the bb server, which already has them. They also need an authenticated `bb` CLI, which an enrolled-only machine does not have (step 3).
 - `install.ps1` links `skills/*` into `~/.bb/skills` and `claude/agents` into `~/.claude/agents`. It copies `bb/AGENTS.md`, the Copilot and Cursor agent files, and `bb/bin/copilot-acp.cmd` to `%USERPROFILE%\.local\bin`.
-- Add `%USERPROFILE%\.local\bin` to the user PATH if it is missing: `[Environment]::SetEnvironmentVariable('Path', "$([Environment]::GetEnvironmentVariable('Path','User'));$env:USERPROFILE\.local\bin", 'User')`. Then restart the daemon (step 3).
-- Do not put a hand-made `copilot-acp` wrapper earlier on PATH; it would shadow the repo launcher.
+- Copies go newer-wins, and a fresh clone is newer than anything already on the machine. Existing `~/.copilot/agents`, `~/.cursor/agents`, `~/.claude/CLAUDE.md` and `~/.bb/AGENTS.md` are overwritten with the repo versions. Back them up first (for example `Copy-Item ~\.copilot\agents ~\.copilot\agents.bak-<timestamp> -Recurse`) and tell the user where the backup is.
+- Put `%USERPROFILE%\.local\bin` at the front of the user PATH if it is missing: `[Environment]::SetEnvironmentVariable('Path', "$env:USERPROFILE\.local\bin;$([Environment]::GetEnvironmentVariable('Path','User'))", 'User')`. Then restart the daemon (step 3).
+- Remove any hand-made `copilot-acp.cmd` or `copilot-acp` wrapper elsewhere on PATH (for example next to `node.exe` or `copilot.cmd`), so it cannot shadow the repo launcher. `(Get-Command copilot-acp).Source` must be `%USERPROFILE%\.local\bin\copilot-acp.cmd`.
 - macOS: clone to `~/src/bb-setup` and run `scripts/sync.sh --no-plugins --no-push`. It symlinks `~/.local/bin/copilot-acp` and the rest.
 
 Verify in a new shell:
 
 ```powershell
-copilot-acp --list-models     # one model id per line; the first probe takes several seconds, then it is cached for a day
+copilot-acp --list-models     # about 180 "id - Name" lines; the first probe takes about 20 s, then it is cached for a day
 copilot-acp --print-args --model claude-opus-5.5-high
+# ["--acp","--model","claude-opus-5.5","--reasoning-effort","high","--context","long_context"]
 ```
+
+The list must include the context tier and effort variants, such as `claude-opus-5.5-high` and `claude-opus-5.5-standard-high`. A short plain list (`claude-opus-5.5 - Claude Opus 5.5`) means another `copilot-acp` is earlier on PATH.
 
 "GitHub Copilot (SopraSteria)" (`copilot-acp-sopra`) has only a macOS shim. On Windows it stays "CLI not found" unless that account is set up separately. That is expected.
 
@@ -108,4 +118,4 @@ The desktop log is `~/.bb/logs/desktop.log`.
 
 ## 7. Final check
 
-In the bb app (web or desktop), start a new thread and select this machine and **GitHub Copilot**. The model picker should list Copilot's models; "Could not load models … failed to provide a model catalog" means `copilot-acp --list-models` fails on the machine (go back to steps 4 and 5). Confirm the user's projects and chats are listed. Report what was done, what was verified, and anything left (daemon autostart, agents not installed, sign-ins still needed).
+In the bb app (web or desktop), start a new thread and select this machine and **GitHub Copilot**. The composer may default to "GitHub Copilot (SopraSteria)", so pick the plain "GitHub Copilot" icon in the picker. Its models should show context sizes, for example "Claude Sonnet 5.5 936k" and "Claude Sonnet 5.5 200k", or "Claude Opus 5.5 1M". That confirms the repo launcher is in use. "Could not load models … failed to provide a model catalog" means `copilot-acp --list-models` fails on the machine (go back to steps 4 and 5). Confirm the user's projects and chats are listed. Report what was done, what was verified, and anything left (daemon autostart, agents not installed, sign-ins still needed).
