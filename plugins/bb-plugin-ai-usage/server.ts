@@ -2,7 +2,6 @@
 // window. It asks the host entry for the machine's ai-usage and its report,
 // keeps the last report in memory, and runs the long operations as jobs.
 // It never logs the team key or what a report says.
-import { createHash } from "node:crypto";
 import type { BbPluginApi, ExperimentalPluginRpcHandlerContext } from "@get-bb/plugin-sdk";
 import demoTeam from "./demo/team.json" with { type: "json" };
 import { allowed } from "./src/args.js";
@@ -12,13 +11,13 @@ import { teamSource, type TeamSource } from "./src/team-source.js";
 import { BusyError, Jobs } from "./src/jobs.js";
 import { withDeadline } from "./src/deadline.js";
 import { Refresher, refreshTargets } from "./src/schedule.js";
-import { autoInstallable, installRefusal, NOTHING_COLLECTED, phaseOf, type HostFacts } from "./src/phase.js";
+import { autoInstallable, installRefusal, NOTHING_COLLECTED, phaseOf, shownPhase, type HostFacts } from "./src/phase.js";
 import { fillMatrixFromBurn, mergeCopilotColumns } from "./src/burn-matrix.js";
 import { applyCursorUsage } from "./src/cursor-usage.js";
-import { machineInMatrix, mergeMeasured } from "./src/local-providers.js";
 import { readReport, SchemaError, type Report, type Usage } from "./src/report.js";
 import { applyPoolExtraUsage, poolStatusSchema, type PoolStatus } from "./src/pool.js";
-import { readTaken } from "./src/take.js";
+import { nextShown, reportForClient } from "./src/shown.js";
+import { mergeMachine, readTaken } from "./src/take.js";
 import { rpcContract, type HostView, type JobKind, type JobView } from "./src/rpc.js";
 
 const REPORT_TTL = 30_000;
@@ -49,6 +48,9 @@ interface Cache {
   probedAt: number;
   probing: Promise<Probe | null> | null;
   probeError: string | null;
+  /** This machine's own report as last read. Merged with the other machines before it is shown. */
+  local: Report | null;
+  /** The complete report the page shows, and its hash; replaced only by a complete merge. */
   report: Report | null;
   hash: string | null;
   reportAt: number | null;
@@ -82,7 +84,7 @@ export default async function plugin(bb: BbPluginApi) {
   const cache = (hostId: string): Cache => {
     let c = caches.get(hostId);
     if (c === undefined) {
-      c = { probe: null, probedAt: 0, probing: null, probeError: null, report: null, hash: null, reportAt: null, reportCheckedAt: 0, reportState: null, refreshing: null };
+      c = { probe: null, probedAt: 0, probing: null, probeError: null, local: null, report: null, hash: null, reportAt: null, reportCheckedAt: 0, reportState: null, refreshing: null };
       caches.set(hostId, c);
     }
     return c;
@@ -167,20 +169,17 @@ export default async function plugin(bb: BbPluginApi) {
     );
   }
 
-  /** Takes a report: from report --json, collect --json, or nothing when the command failed. */
+  /**
+   * Takes a machine's report from report --json or collect --json. It becomes the local read that
+   * attachMachines merges; the page's report is not touched here, so a failed read keeps the last one.
+   */
   function take(hostId: string, out: RunOutput): void {
     const c = cache(hostId);
     c.reportCheckedAt = Date.now();
     if (out.code === 0 && out.json !== null) {
       try {
-        const report = readTaken(out.json);
-        const hash = createHash("sha256").update(JSON.stringify(report)).digest("hex").slice(0, 32);
+        c.local = readTaken(out.json);
         c.reportState = { ok: true, schemaMismatch: false, nothingCollected: false, error: null };
-        if (hash !== c.hash) {
-          c.report = report;
-          c.hash = hash;
-          c.reportAt = Date.now();
-        }
       } catch (error) {
         c.reportState = {
           ok: false,
@@ -228,13 +227,13 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   /**
-   * Adds every persistent machine to the report: its logins, its matrix row and
-   * its burn. The work runs on a copy that then replaces the cached report, so a
-   * `state` read never sees a half-filled one. A machine that is offline or whose
-   * live reading failed shows its last snapshot, marked with when it was seen.
+   * Adds every persistent machine to the local read: its logins, its matrix row and its burn. The work
+   * runs on a copy that replaces the shown report only when it is complete, so the page never sees a
+   * half-filled one. A machine that is offline or whose live reading failed shows its last snapshot,
+   * marked with when it was seen.
    */
   async function attachMachines(reportHostId: string): Promise<void> {
-    const base = cache(reportHostId).report;
+    const base = cache(reportHostId).local;
     if (base === null) return;
     const list = await hosts(true);
     const persistent = list.hosts.filter((x) => x.type === "persistent");
@@ -263,16 +262,15 @@ export default async function plugin(bb: BbPluginApi) {
         }),
     );
     const next = structuredClone(base);
+    const snaps = new Map<string, Snapshot | null>();
     for (const machine of persistent) {
       const reading = live.find((x) => x.id === machine.id)?.measured ?? null;
-      const snap = reading === null ? await bb.storage.kv.get<Snapshot>(`snapshot:${machine.id}`) : undefined;
-      // A reading matches this machine by its BB name or the OS hostname it reports under, never by OS user.
-      if (reading !== null) mergeMeasured(next, { ...reading, hostName: machine.name }, { aliases: [reading.hostName] });
-      else if (snap !== undefined) mergeMeasured(next, { ...snap, hostName: machine.name }, { measuredAt: snap.at, aliases: snap.alias ? [snap.alias] : [] });
-      // The row does not depend on extras: its OS user comes from the live reading, the snapshot, or the probe.
-      let user = reading?.user ?? snap?.user ?? "";
-      if (user === "" && machine.status === "connected") user = cache(machine.id).probe?.user ?? (await probeHost(machine.id))?.user ?? "";
-      machineInMatrix(next, machine.name, user, machine.id, [reading?.hostName ?? snap?.alias ?? ""]);
+      const snap = reading === null ? ((await bb.storage.kv.get<Snapshot>(`snapshot:${machine.id}`)) ?? null) : null;
+      snaps.set(machine.id, snap);
+      // The OS user comes from the live reading or the snapshot; the probe answers only when both lack one.
+      const hasUser = (reading?.user ?? snap?.user ?? "") !== "";
+      const fallbackUser = !hasUser && machine.status === "connected" ? (cache(machine.id).probe?.user ?? (await probeHost(machine.id))?.user ?? "") : "";
+      mergeMachine(next, machine, reading, snap, fallbackUser);
     }
     try {
       fillMatrixFromBurn(next, bb.server.experimental_dataDir, Date.now(), list.hosts.map((h) => ({ id: h.id, name: h.name })));
@@ -283,15 +281,17 @@ export default async function plugin(bb: BbPluginApi) {
     mergeCopilotColumns(next);
     for (const machine of persistent) {
       const reading = live.find((x) => x.id === machine.id)?.measured ?? null;
-      const snap = reading === null ? await bb.storage.kv.get<Snapshot>(`snapshot:${machine.id}`) : undefined;
+      const snap = snaps.get(machine.id) ?? null;
       const tokens = reading !== null ? (reading.cursorTokens ?? null) : (snap?.cursorTokens ?? null);
       if (tokens !== null) applyCursorUsage(next, machine.id, tokens);
     }
     const reported = applyPoolExtraUsage(next, await poolAccounts());
     const stored = cache(reportHostId);
-    stored.report = reported;
-    stored.hash = createHash("sha256").update(JSON.stringify(reported)).digest("hex").slice(0, 32);
-    stored.reportAt = Date.now();
+    const shown = nextShown(stored, reported, Date.now());
+    stored.report = shown.report;
+    stored.hash = shown.hash;
+    stored.reportAt = shown.reportAt;
+    bb.realtime.publish("changed", { hostId: reportHostId });
   }
 
   /** Reads the machine's report again, once at a time; every window shares the answer. */
@@ -348,7 +348,7 @@ export default async function plugin(bb: BbPluginApi) {
     return {
       hostId: id,
       hostName: record?.name ?? null,
-      phase: phaseOf(f),
+      phase: shownPhase(phaseOf(f), report !== null),
       platform: p?.platform ?? f.bbPlatform,
       macos: p?.macos ?? null,
       root: p?.uid === 0,
@@ -538,7 +538,7 @@ export default async function plugin(bb: BbPluginApi) {
       return {
         view: await view(hostId),
         job: id === null ? null : jobs.latest(id),
-        report: c !== null && c.hash !== hash ? c.report : null,
+        report: c !== null ? reportForClient(c, hash) : null,
         hash: c?.hash ?? null,
         reportAt: c?.reportAt ?? null,
         refreshing: c?.refreshing != null || c?.probing != null,
@@ -672,6 +672,7 @@ export default async function plugin(bb: BbPluginApi) {
           const out = await run(t.id, t.probe, args, TIMEOUT.uninstall);
           for (const line of out.stdout.trim().split("\n")) if (line !== "") log(line);
           const c = cache(t.id);
+          c.local = null;
           c.report = null;
           c.hash = null;
           c.reportState = null;

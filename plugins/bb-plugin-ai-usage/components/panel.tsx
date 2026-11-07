@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ago } from "../src/format";
+import { shownPhase } from "../src/phase";
 import type { Report } from "../src/report";
 import type { HostView, JobView, rpcContract } from "../src/rpc";
 import { atLeast, MIN_AI_USAGE } from "../src/version";
@@ -113,7 +114,8 @@ function Quiet({ children }: { children: ReactNode }) {
 
 function Body({ state, now, answer }: { state: AiUsageState; now: number; answer: (args: string[]) => Promise<void> }) {
   const { view, report, job } = state;
-  switch (view.phase) {
+  // A loaded report stays on the page through a failed or pending refresh; the placeholders are for a first load only.
+  switch (shownPhase(view.phase, report !== null)) {
     case "loading":
       return (
         <Quiet>
@@ -152,6 +154,8 @@ function Body({ state, now, answer }: { state: AiUsageState; now: number; answer
       <Banners view={view} report={report} now={now} reportAt={state.reportAt} />
       {report !== null ? (
         <>
+          {/* A fixed line, so a refresh that starts or ends never moves the report. */}
+          <div className="-mb-4 h-4 text-right text-[11px] leading-4 text-muted-foreground">{state.refreshing ? "Refreshing…" : null}</div>
           <ReportView report={report} now={now} answer={answer} />
           <TeamCard view={view} report={report} />
         </>
@@ -171,6 +175,13 @@ function Banners({ view, report, now, reportAt }: { view: HostView; report: Repo
     out.push(
       <Banner key="schema" tone="tight">
         ai-usage on {machine(view)} prints a report this plugin does not read. Update AI Usage under Settings → Plugins.
+      </Banner>,
+    );
+  }
+  if (report !== null && view.error !== null && view.phase !== "offline") {
+    out.push(
+      <Banner key="refresh-failed" tone="tight">
+        The last refresh failed{reportAt !== null ? `; the report is from ${ago(new Date(reportAt).toISOString(), now)}` : ""}. {view.error}
       </Banner>,
     );
   }

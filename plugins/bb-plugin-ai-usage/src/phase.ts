@@ -40,6 +40,16 @@ export function phaseOf(f: HostFacts): Phase {
 }
 
 /**
+ * The phase the page shows. Once a report has loaded, a refresh that fails or is still reading keeps
+ * the report on the page, and a banner says so; only what changes the page's whole footing (a schema
+ * this plugin does not read, an ai-usage that is gone) replaces it.
+ */
+export function shownPhase(phase: Phase, loaded: boolean): Phase {
+  if (!loaded) return phase;
+  return phase === "error" || phase === "loading" || phase === "needs-first-run" ? "ready" : phase;
+}
+
+/**
  * ai-usage installs itself on a machine when nobody has to answer anything
  * for it: a connected, persistent macOS or Linux machine where BB runs as a
  * person, not root, with no ai-usage and no schedule of one, that has not
