@@ -12,7 +12,7 @@ import {
 import { useIsCompactViewport } from "./hooks/use-compact-viewport.js";
 import { usePointerCoarse } from "./hooks/use-pointer-coarse.js";
 import { usePortalScopeProps } from "../../lib/portal-scope.js";
-import { cn } from "../../lib/utils.js";
+import { cn } from "../../lib/cn.js";
 
 export interface ResponsiveOverlayContextValue {
   isCompactViewport: boolean;

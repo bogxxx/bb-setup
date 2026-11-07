@@ -5,6 +5,7 @@ import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { SHIPPED_AGENTS } from "./agents.generated.js";
 import { parseQuotaBlock, quotaBlockEnd, type QuotaBlock } from "./lib/quota-block.js";
+import { defaultSourceHostId } from "./lib/utils.js";
 
 export const ROLES = ["regular", "orchestrator", "interviewer"] as const;
 const roleSchema = z.enum(ROLES);
@@ -547,8 +548,22 @@ export default async function plugin(bb: BbPluginApi) {
   const blockKey = (providerId: string) => `quota-blocked:${providerId}`;
   const reviewKey = (threadId: string) => `review:${threadId}`;
 
+  /** Host the review runs on. Undefined falls back to the server-default usage query. */
+  async function reviewHostId(record: ReviewRecord): Promise<string | undefined> {
+    try {
+      if (record.environmentId) {
+        const environment = await bb.sdk.environments.get({ environmentId: record.environmentId });
+        return environment.hostId || undefined;
+      }
+      const project = await bb.sdk.projects.get({ projectId: record.projectId });
+      return defaultSourceHostId(project.sources) || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Why a provider is skipped for a review, or null when it can be tried. */
-  async function skipReason(providerId: string): Promise<string | null> {
+  async function skipReason(providerId: string, hostId?: string): Promise<string | null> {
     const stored = await kv.get<unknown>(blockKey(providerId));
     if (stored !== undefined && stored !== null) {
       const block = parseQuotaBlock(stored);
@@ -559,7 +574,7 @@ export default async function plugin(bb: BbPluginApi) {
     // Best effort: a provider whose usage report shows a used-up window, or no usable login, is skipped.
     try {
       const usage = await Promise.race([
-        bb.sdk.system.usageLimits({ providerId }),
+        bb.sdk.system.usageLimits({ providerId, ...(hostId ? { hostId } : {}) }),
         new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
       ]);
       const entry = usage?.[providerId];
@@ -578,12 +593,18 @@ export default async function plugin(bb: BbPluginApi) {
     record: ReviewRecord,
     replaces?: string,
   ): Promise<{ id: string; status: string; providerId: string } | null> {
+    let hostId: string | undefined;
+    try {
+      hostId = await reviewHostId(record);
+    } catch {
+      hostId = undefined;
+    }
     for (let index = record.index; index < record.chain.length; index++) {
       const spec = reviewerAt(record, index);
       const providerId = spec.providerId;
-      const skip = await skipReason(providerId);
+      const skip = await skipReason(providerId, hostId);
       if (skip) {
-        bb.log.info(`review skips ${providerId} (${skip}) for worker ${record.worker}`);
+        bb.log.info(`review skips ${providerId} (${skip}) for worker ${record.worker} host ${hostId ?? "default"}`);
         continue;
       }
       const defined = spec.agent ? agentDefinition(spec.agent, (message) => bb.log.warn(message)) : undefined;

@@ -12,7 +12,7 @@
     "components": "@/components",
     "ui": "@/components/ui",
     "lib": "@/lib",
-    "utils": "@/lib/utils",
+    "utils": "@/lib/cn",
     "hooks": "@/hooks"
   },
   "registries": {

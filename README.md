@@ -8,7 +8,7 @@ Companion to [ai-agents-setup](https://github.com/bogxxx/ai-agents-setup), which
 
 | Path | What | How bb uses it |
 |---|---|---|
-| `plugins/bb-plugin-role-picker` | Composer Role control (regular / orchestrator) and the `role_choice` tool | bb runs it from here (`path:` source) |
+| `plugins/bb-plugin-role-picker` | Composer Role control (regular / orchestrator) and the `role_choice` tool | git source, update with `bb plugin update role-picker` |
 | `plugins/bb-plugin-claude-subagents` | Subagents panel and `bb claude-subagents` | bb runs it from here (`path:` source) |
 | `skills/provider-orchestration` | User skill that routes work to role agents | junction from `~/.bb/skills/provider-orchestration` |
 | `skills/onboard-bb-machine` | User skill that enrolls a new machine with the bb server, sets up Copilot and the desktop app, and checks that chats work | junction from `~/.bb/skills/onboard-bb-machine` |
@@ -78,6 +78,8 @@ git clone https://x-access-token:$T@github.com/bogxxx/bb-setup ~/src/bb-setup
 git -C ~/src/bb-setup remote set-url origin https://github.com/bogxxx/bb-setup
 ~/src/bb-setup/scripts/sync.sh -m "What changed"
 ```
+
+In shells, run bb as `node "$BB_CLI"` so the CLI still runs when `$BB_CLI` is not executable (see [notes/upstream/bb-cli-eacces-silent-exit.md](notes/upstream/bb-cli-eacces-silent-exit.md)).
 
 `scripts/sync.sh` is the macOS counterpart of `sync.ps1`. Its first run is the install. It pulls first, then symlinks `~/.bb/skills/provider-orchestration`, `~/.claude/agents`, `~/.bb/AGENTS.md` and `~/.claude/CLAUDE.md` into the repo. macOS can link single files, so nothing is copied. Existing files are moved to `*.bak-<timestamp>`, and a local file that is newer than the repo copy is copied into the repo first. Then it commits and pushes. Options: `-m`, `--dry-run`, `--no-push`, `--no-plugins`.
 

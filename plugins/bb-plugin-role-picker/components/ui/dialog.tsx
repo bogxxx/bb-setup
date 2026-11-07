@@ -2,7 +2,7 @@ import * as React from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Slot } from "@radix-ui/react-slot";
 
-import { cn } from "../../lib/utils";
+import { cn } from "../../lib/cn";
 import { usePortalScopeProps } from "../../lib/portal-scope";
 import { useBrowserDimmingModal } from "../../hooks/useBrowserDimmingModal";
 import {

@@ -1,8 +1,8 @@
-import { type ClassValue, clsx } from "clsx";
-import { twMerge } from "tailwind-merge";
-
-export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
+/** Host id of the source marked default, if there is one. */
+export function defaultSourceHostId(
+  sources: readonly { isDefault: boolean; hostId: string }[],
+): string | undefined {
+  return sources.find((source) => source.isDefault)?.hostId;
 }
 
 export function formatHomePathForDisplay(pathValue: string): string {
