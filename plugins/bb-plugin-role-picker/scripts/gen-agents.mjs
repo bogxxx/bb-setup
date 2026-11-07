@@ -17,7 +17,8 @@ const SOURCES = [
 const entries = [];
 for (const [fromDir, keyDir, files] of SOURCES) {
   for (const file of files) {
-    const text = readFileSync(path.join(repo, fromDir, file), "utf8");
+    // Normalize line endings: a Windows checkout has CRLF, so the output would differ per machine.
+    const text = readFileSync(path.join(repo, fromDir, file), "utf8").replace(/\r\n/g, "\n");
     entries.push(`  ${JSON.stringify(`${keyDir}/${file}`)}: ${JSON.stringify(text)},`);
   }
 }
