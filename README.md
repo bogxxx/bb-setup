@@ -60,6 +60,16 @@ It links the folders, copies the files, builds and installs the local plugins, i
 
 Not included: plugin secrets, bb account sign-in, gh and provider logins, `bb.db`, and thread data. Set those up by hand. The Copilot agent in `provider-acp.customAgents` runs the bare command `copilot-acp`, so `~/.local/bin` must be on PATH; the launcher runs `bb/bin/copilot-acp.mjs` from `~/src/bb-setup`.
 
+### Add a machine to the bogxxx.getbb.app server
+
+A machine that only runs threads for the remote server (no local bb server) is enrolled with the server's install command, not set up with the full `install.ps1`. The `onboard-bb-machine` skill (`skills/onboard-bb-machine/SKILL.md`) has the steps and the known failures. In short:
+
+1. Run the server's enrollment command once (the `bbde_` token is single-use; on Windows use `install.ps1` with the same token). If Windows refuses to start the daemon through WMI, start `install-machine-windows.mjs --run` by hand.
+2. Install Copilot with `winget install GitHub.Copilot` (the launcher looks for `copilot.exe`; npm only installs `copilot.cmd`), then `copilot login`.
+3. Back up `~/.copilot/agents` and the other copied files, then run `install.ps1 -SkipPlugins -SkipSettings`. Plugins and settings already live on the server, and the `bb` CLI of an enrolled-only machine gets `HTTP 401`.
+4. Put `~/.local/bin` first on the user PATH, remove any other `copilot-acp` wrapper, and restart the host daemon.
+5. In the bb app, select the machine and "GitHub Copilot". The model picker shows context sizes (for example "Claude Opus 5.5 1M").
+
 ## macOS
 
 ```bash
