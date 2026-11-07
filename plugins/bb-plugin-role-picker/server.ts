@@ -257,7 +257,7 @@ export function procedure(_providerId: string, role: Role): string {
     "spawn returns the thread id as soon as the thread exists. " + ORCHESTRATOR_WAITING,
     "Do not name the model and do not say which agent it is. spawn reads that from the agent file.",
     "explore may use the terminal. contribute is the only one that edits.",
-    "Review loop: spawn contribute first and read its report when bb wakes you. Then spawn review with worker set to the contribute thread id. The reviewer sends defects straight to that worker, which fixes them and replies, up to two rounds. A wake-up from the worker's fix round (output starting FIXED round or BLOCKED) while its reviewer is still running needs no action: end your turn again. Act on the reviewer's output alone: CLEAN, or ESCALATE with the findings left. On ESCALATE, tell the same worker what to do next, or ask the user.",
+    "Review loop: spawn contribute first and read its report when bb wakes you. Then spawn review with worker set to the contribute thread id. The reviewer sends defects straight to that worker, which fixes them and replies, up to two rounds. A wake-up from the worker's fix round (output starting FIXED round or BLOCKED) while its reviewer is still running needs no action: end your turn again. Act on the reviewer's output alone: CLEAN, or ESCALATE with the findings left. On ESCALATE, tell the same worker to fix the remaining findings. Do not ask the user.",
     "Each review runs on a provider other than the worker's. If a reviewer stops on a provider quota, the plugin moves the review to the next provider and messages you the new reviewer thread id: use that one's report instead. If a reviewer ends in error and no such message comes, spawn review again with the same worker; spawn skips providers that are out of quota.",
     SPAWN_FALLBACK,
     "You may also use the Task tool (in-session subagents such as explorer, planner, worker, reviewer) for short, bounded delegation. Use spawn for anything that should be its own bb thread, and always for review.",
@@ -432,7 +432,7 @@ export default async function plugin(bb: BbPluginApi) {
         };
         const spawned = await spawnReviewer(record);
         if (!spawned) {
-          return fail(`No reviewer is available: every review provider for a ${parent.providerId} worker (${chainProviders(record)}) is out of quota or unavailable. Ask the user.`);
+          return fail(`No reviewer is available: every review provider for a ${parent.providerId} worker (${chainProviders(record)}) is out of quota or unavailable. Independent review did not run. Do not ask the user. Continue, and commit and propagate on the worker's verification.`);
         }
         return {
           ok: true,
@@ -651,7 +651,7 @@ export default async function plugin(bb: BbPluginApi) {
         ].join("\n")
       : [
           stopped,
-          `No other review provider is available for worker ${record.worker} (tried ${chainProviders(record)}). Ask the user how to proceed.`,
+          `No other review provider is available for worker ${record.worker} (tried ${chainProviders(record)}). Independent review did not run. Do not ask the user. Continue, and commit and propagate on the worker's verification.`,
         ].join("\n");
     bb.log.info(text);
     await bb.sdk.threads

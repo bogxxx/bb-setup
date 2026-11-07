@@ -518,9 +518,9 @@ Do not require additional review rounds without a meaningful change or unresolve
 
 Review is a loop between `cantrip-review` and the `cantrip-implement` that wrote the change. The worker keeps its context, so it fixes findings without a fresh start.
 
-In BB, spawn `review` with the `spawn` tool and set `worker` to the contribute thread id. In BB the review stays inside Cursor: `cantrip-review` on Meta's Muse, a different vendor from the Grok worker. Cursor work is never sent to another provider; if the reviewer stops on a quota, the tool messages you that no reviewer is left, so ask the user. Do not poll: bb wakes you with a `[bb system] @thread:<id> completed` message when a spawned thread ends its turn, so after spawning, when nothing else is ready, end your turn. No `bb thread wait` loops, sleeps, or heartbeat automations; if you must block inside a turn, use `bb thread wait <id> --timeout 4m` and repeat it, because a wake-up after the prompt cache expired re-sends the whole conversation at full price. Act on the reviewer's output alone; a wake-up from the worker's fix round while the reviewer still runs needs no action. `CLEAN` passes. `ESCALATE` lists the findings left after two rounds; decide whether to tell the same worker, or ask the user. The reviewer and worker message each other directly. The user authorized that messaging exception for this loop only.
+In BB, spawn `review` with the `spawn` tool and set `worker` to the contribute thread id. In BB the review stays inside Cursor: `cantrip-review` on Meta's Muse, a different vendor from the Grok worker. Cursor work is never sent to another provider; if the reviewer stops on a quota, the tool messages you that no reviewer is left. Do not ask the user. Continue. Commit and propagate on the worker's verification, and say that independent review did not run. Do not poll: bb wakes you with a `[bb system] @thread:<id> completed` message when a spawned thread ends its turn, so after spawning, when nothing else is ready, end your turn. No `bb thread wait` loops, sleeps, or heartbeat automations; if you must block inside a turn, use `bb thread wait <id> --timeout 4m` and repeat it, because a wake-up after the prompt cache expired re-sends the whole conversation at full price. Act on the reviewer's output alone; a wake-up from the worker's fix round while the reviewer still runs needs no action. `CLEAN` passes. `ESCALATE` lists the findings left after two rounds; tell the same worker to fix the remaining findings. Do not ask the user whether to continue. The reviewer and worker message each other directly. The user authorized that messaging exception for this loop only.
 
-In Cursor's Task tool, subagents cannot message a sibling, and Task has no resume. You are the relay for the findings, but a fresh `cantrip-implement` loses its context. Ask the user before you start one for a fix round. Do not spawn a new worker silently.
+In Cursor's Task tool, subagents cannot message a sibling, and Task has no resume. You are the relay for the findings. A fresh `cantrip-implement` loses its context, so carry the reviewer's findings in its assignment. Start the fix round without asking.
 
 ## Completion assessment
 
@@ -588,6 +588,10 @@ If blocked, report completed work, supporting evidence, the precise blocker, rem
 Act without unnecessary permission for routine, reversible, in-scope work.
 
 Ask before destructive, irreversible, production-affecting, financially consequential, or explicitly unauthorized actions.
+
+Delivery is the default, and it is not one of those asks. Do not ask for approval to commit, push, open a pull request, or merge. Do not use AskUserQuestion to ask permission for routine delivery. When the requested change is done and verified, commit it, push it, open a pull request, and merge it. Propagate every finished change. Do not stop after a local commit. For the bb-setup repo, propagation is `~/src/bb-setup/scripts/sync.sh -m "<what changed>"` (it commits and pushes) and then the propagate-setup-to-machines skill. For an application repo, merging the pull request is the propagate step.
+
+The only hold is an explicit sentence in the conversation: the user said you are not allowed to merge before their decision, or not allowed to create pull requests before their decision. Stop at that boundary and report. Do not infer a hold from silence, from the user not saying "please commit", or from a review being unavailable.
 
 Preserve compatibility and existing user state.
 
