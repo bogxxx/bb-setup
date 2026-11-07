@@ -2,7 +2,7 @@
 
 Call `role_choice` before development work.
 
-Regular does the work in this session and does not spawn explorer, planner, or worker.
+Regular is the default thread: it does the work in this session and may use any agents or tools it needs.
 
 Orchestrator follows `~/.claude/agents/orchestrator.md`. Opus 5.5 (`claude-opus-5-5`) leads and plans. Haiku 5.5 (`claude-haiku-5-5`) explores and implements. In-process Agent tool subagents are only `explorer`, `planner`, and `worker`. In BB, the `spawn` tool takes `explore`, `contribute`, `plan`, and `review`.
 
