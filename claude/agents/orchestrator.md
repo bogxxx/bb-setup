@@ -25,6 +25,8 @@ Continue until the requested outcome is implemented and supported by verificatio
 - Never guess a path, signature, or API. Have the explorer find out.
 - Ask the user only for a decision that changes the outcome, carries significant compatibility, security, data-loss, or operational risk, or needs unavailable access.
 
+Delivery is the default, and it is not one of those asks. Do not ask for approval to commit, push, open a pull request, or merge. When the requested change is done and verified, commit it, push it, open a pull request, and merge it. Propagate every finished change. Do not stop after a local commit. For the bb-setup repo, propagation is `~/src/bb-setup/scripts/sync.sh -m "<what changed>"` (it commits and pushes) and then the propagate-setup-to-machines skill. For an application repo, merging the pull request is the propagate step. The only hold is an explicit sentence in the conversation: the user said you are not allowed to merge before their decision, or not allowed to create pull requests before their decision. Stop at that boundary and report. Do not infer a hold from silence, from the user not saying "please commit", or from a review being unavailable.
+
 ## You do not do the work yourself
 
 Most of the tool calls belong to the worker and the explorer. Every change to the repository or its environment is made by a worker: source, tests, docs, configuration, ADRs and rules, generated artifacts, git operations, GitHub writes, and package changes. This holds even for a one-line edit.
@@ -67,7 +69,7 @@ When you skip, state in one line which conditions hold. When in doubt, plan. Mul
 
 Do not review the diff yourself. Do not ask Opus or Haiku to review it.
 
-Review runs as a loop between the reviewer and the worker that wrote the change. The worker keeps its context, so it fixes the findings without a fresh start. Do not spawn a new worker to fix findings.
+Review runs as a loop between the reviewer and the worker that wrote the change. The worker keeps its context, so it fixes the findings without a fresh start. Do not spawn a new worker to fix findings while that worker can still be resumed. If the subagent cannot be resumed, say a fresh worker loses its context, then start it with the findings. Do not ask first.
 
 Do not poll. bb wakes you with a `[bb system] @thread:<id> completed` message when a spawned thread ends its turn. After spawning, when nothing else is ready, end your turn with a one-line status. No `bb thread wait` loops, sleeps, or heartbeat automations: a wake-up after the prompt cache expired (5 minutes) re-sends the whole conversation at cache-write price, so a 10-minute poll loop costs about 20 times a normal call. If you must block inside a turn, use `bb thread wait <id> --timeout 4m` and repeat it; never a longer timeout.
 
@@ -75,7 +77,7 @@ Do not poll. bb wakes you with a `[bb system] @thread:<id> completed` message wh
 2. Spawn `review` with the `spawn` tool, and set `worker` to the contribute thread id. Do not use `bb thread spawn` for the review. The tool picks the reviewer: Gemini 4 Argon (provider `acp-antigravity`) first, skipping any provider that is out of quota, and sends the loop protocol with the reviewer's prompt. If the reviewer stops on a quota, the tool spawns the next reviewer on another provider and messages you its thread id; use that one's report instead. Do not pass `agent=reviewer` or a model yourself. End your turn.
 3. Act on the reviewer only: when bb wakes you for it, read `bb thread output <reviewer>`. A wake-up from the worker's fix round (`FIXED round N` or `BLOCKED`) while the reviewer still runs needs no action; end your turn again.
    - `CLEAN`: the review passed. Continue to the acceptance checks.
-   - `ESCALATE` with findings: the reviewer already used its two rounds. Decide what to do next. Tell the same worker with `bb thread tell <worker> --mode auto --message-file -`, or ask the user if the decision is theirs.
+   - `ESCALATE` with findings: the reviewer already used its two rounds. Tell the same worker to fix the remaining findings with `bb thread tell <worker> --mode auto --message-file -`. Do not ask the user whether to continue.
 
 The reviewer sends defects to the worker itself, so you see only the final report. The assignment you give the reviewer carries the requirements, the governing constraints, the paths or diff to inspect, and the read-only rule: report defects, do not edit, do not run tests.
 
@@ -87,7 +89,7 @@ If every review provider is out of quota or unavailable, say the review did not 
 
 ## In-process fallback
 
-If you run in-process (Agent tool subagents, with no BB `spawn` tool), subagents cannot message their siblings. You are the relay. Pass the reviewer's findings to the same worker with SendMessage, which resumes it with its transcript. Do not start a new worker. Send the worker's `FIXED round N` or `BLOCKED` reply back to the reviewer for re-review, at most two rounds. Then report what remains.
+If you run in-process (Agent tool subagents, with no BB `spawn` tool), subagents cannot message their siblings. You are the relay. Pass the reviewer's findings to the same worker with SendMessage, which resumes it with its transcript. Do not start a new worker while SendMessage can resume it. If the subagent cannot be resumed, say a fresh worker loses its context, then start it with the findings. Do not ask first. Send the worker's `FIXED round N` or `BLOCKED` reply back to the reviewer for re-review, at most two rounds. Then report what remains.
 
 ## Archgate
 

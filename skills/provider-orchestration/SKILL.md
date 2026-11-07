@@ -37,7 +37,7 @@ The reviewer and the worker fix defects together. The reviewer does not report e
 2. Spawn `review` with `worker` set to the worker's thread id. The spawn tool picks the reviewer and its model for the provider, and it appends the loop protocol to the reviewer's prompt. End your turn.
 3. Act on the reviewer alone: when bb wakes you for it, read `bb thread output <reviewer>`. Wake-ups from the worker's fix rounds while the reviewer runs need no action.
    - `CLEAN`: the review passed. Run the acceptance checks.
-   - `ESCALATE` plus findings: decide what to do next. Tell the same worker, or ask the user.
+   - `ESCALATE` plus findings: tell the same worker to fix the remaining findings. Do not ask the user whether to continue.
 
 Inside the loop, the reviewer checks the worker's diff. If there are defects, it sends them to the worker in `REVIEW round N/2 from thread:<reviewer id>`. The worker fixes only those findings, runs its checks, and replies `FIXED round N` (or `BLOCKED`) to the reviewer. The worker keeps its context, so it does not start over. The reviewer re-reviews. After round 2, if findings remain, it ends with `ESCALATE`.
 
@@ -45,7 +45,11 @@ The spawn tool sets `parentNotifications: auto` on every spawned thread, so bb w
 
 Messaging exception: the bb guide forbids messaging other threads unless the user asks. The user authorized this loop only: a reviewer may message the worker it reviews, and the worker may reply to that reviewer. No other thread-to-thread messages.
 
-In-process subagents cannot reach a sibling. That covers the Claude Agent tool, Copilot `task`, and Cursor `Task`. There the orchestrator is the relay. It passes the reviewer's findings to the same worker with SendMessage (Claude) or `write_agent` (Copilot), which resumes that worker with its transcript. It does not spawn a new worker to fix. It sends the fix back to the reviewer, for at most two rounds. On Cursor, if a Task subagent cannot be resumed, say so and ask the user.
+In-process subagents cannot reach a sibling. That covers the Claude Agent tool, Copilot `task`, and Cursor `Task`. There the orchestrator is the relay. It passes the reviewer's findings to the same worker with SendMessage (Claude) or `write_agent` (Copilot), which resumes that worker with its transcript. It does not spawn a new worker to fix while that resume works. If any in-process subagent cannot be resumed, say a fresh worker loses its context, then start it with the findings. Do not ask first. It sends the fix back to the reviewer, for at most two rounds.
+
+If no reviewer is left, do not ask the user. Continue. Commit and propagate on the worker's verification, and say that independent review did not run.
+
+When the work is done and verified, commit, push, open a pull request, and merge. Do not ask permission. For the bb-setup repo, propagation is `~/src/bb-setup/scripts/sync.sh -m "<what changed>"` and then the propagate-setup-to-machines skill. An application repo propagates by merging the pull request. The only hold is an explicit sentence that the user is not allowed to merge before their decision, or not allowed to create pull requests before their decision. Do not infer a hold from silence, from the user not saying "please commit", or from a review being unavailable.
 
 ## Cursor (`acp-cursor`)
 

@@ -42,6 +42,8 @@ Do not stop at an intermediate artifact unless that artifact is the user's reque
 - **Find out before acting.** Never guess a path, signature, or API. Have the explorer find out.
 - **Ask only when necessary.** Ask the user only for decisions that materially change the outcome, carry significant compatibility, security, data-loss, or operational risk, or need unavailable access. Otherwise make a conservative, reversible assumption and continue.
 
+Delivery is the default, and it is not one of those asks. Do not ask for approval to commit, push, open a pull request, or merge. When the requested change is done and verified, commit it, push it, open a pull request, and merge it. Propagate every finished change. Do not stop after a local commit. For the bb-setup repo, propagation is `~/src/bb-setup/scripts/sync.sh -m "<what changed>"` (it commits and pushes) and then the propagate-setup-to-machines skill. For an application repo, merging the pull request is the propagate step. The only hold is an explicit sentence in the conversation: the user said you are not allowed to merge before their decision, or not allowed to create pull requests before their decision. Stop at that boundary and report. Do not infer a hold from silence, from the user not saying "please commit", or from a review being unavailable.
+
 ## You do not do the work yourself
 
 You are the most expensive model in this setup. The worker and the explorer exist so that the bulk of the tokens are spent on cheaper models. Most of the work in a task, measured in tool calls and tokens, should be done by subagents, mostly by the worker. You decide, delegate, read reports, and confirm.
@@ -122,8 +124,8 @@ In a BB thread, where the `spawn` tool is available:
 Do not poll. bb wakes you with a `[bb system] @thread:<id> completed` message when a spawned thread ends its turn. After spawning, when nothing else is ready, end your turn with a one-line status. No `bb thread wait` loops, sleeps, or heartbeat automations: a wake-up after the prompt cache expired (5 minutes on Opus) re-sends the whole conversation at cache-write price, so a 10-minute poll loop costs about 20 times a normal call. If you must block inside a turn, use `bb thread wait <id> --timeout 4m` and repeat it; never a longer timeout.
 
 1. Spawn `contribute` with `spawn`, end your turn, and when bb wakes you read its report with `bb thread output <worker>`.
-2. Spawn `review` with `spawn`, and set `worker` to the contribute thread id. The review stays inside Copilot: the tool runs the Copilot `reviewer` agent on Opus 5.5, a different vendor from the GPT worker, and sends the loop protocol with the reviewer's prompt. Copilot work is never sent to another provider. If the reviewer stops on a quota, the tool messages you that no reviewer is left; ask the user. The reviewer messages the worker itself, so you do not relay. End your turn.
-3. Act on the reviewer only: when bb wakes you for it, read `bb thread output <reviewer>`. A wake-up from the worker's fix round (`FIXED round N` or `BLOCKED`) while the reviewer still runs needs no action; end your turn again. `CLEAN` passes. `ESCALATE` means two rounds are used up or the worker is `BLOCKED`. Then tell the same worker what to do next, or ask the user.
+2. Spawn `review` with `spawn`, and set `worker` to the contribute thread id. The review stays inside Copilot: the tool runs the Copilot `reviewer` agent on Opus 5.5, a different vendor from the GPT worker, and sends the loop protocol with the reviewer's prompt. Copilot work is never sent to another provider. If the reviewer stops on a quota, the tool messages you that no reviewer is left. Do not ask the user. Continue. Commit and propagate on the worker's verification, and say that independent review did not run. Otherwise the reviewer messages the worker itself, so you do not relay. End your turn.
+3. Act on the reviewer only: when bb wakes you for it, read `bb thread output <reviewer>`. A wake-up from the worker's fix round (`FIXED round N` or `BLOCKED`) while the reviewer still runs needs no action; end your turn again. `CLEAN` passes. `ESCALATE` means two rounds are used up or the worker is `BLOCKED`. Tell the same worker to fix the remaining findings. Do not ask the user whether to continue.
 
 In-process, with `task` subagents (no BB `spawn`):
 
@@ -133,7 +135,7 @@ In-process, with `task` subagents (no BB `spawn`):
 4. If the worker replied `BLOCKED`, do not send it to the reviewer. Report the blocker. Otherwise pass the `FIXED` reply to the reviewer with `write_agent`, which resumes it to re-review. Allow at most two rounds. After round 2 with findings still open, report them.
 5. Read the reviewer's final result yourself. Do not wait on the worker for the review.
 
-If `write_agent` cannot resume a subagent, say so and ask the user before you start a fresh one. A fresh worker loses its context.
+If `write_agent` cannot resume a subagent, say that a fresh worker loses its context, then start it with the findings. Do not ask before starting it.
 
 The user authorized the messaging exception for this review loop only: between a reviewer and the worker it reviews. It does not cover other agents or threads.
 
