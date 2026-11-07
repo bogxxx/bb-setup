@@ -13,6 +13,8 @@ Detect the provider with `bb thread show $env:BB_THREAD_ID --json` and read `pro
 
 Planning is the default. Spawn the planner before any worker: the in-process `planner` agent, the Cursor `cantrip-plan`, or the BB `spawn` name `plan`. Sequence for non-trivial work: explore (if needed), plan, contribute, review loop.
 
+The planner designs; it does not diagnose. Finding a root cause, reading CI or job logs, reproducing a failure, and mapping unfamiliar code are exploration: spawn `explore` for them first, then give `plan` the findings (cause, evidence, paths) and ask only for the implementation plan. Never assign "find the root cause and plan the fix" to the planner. A bug with an unknown root cause is explore, then plan.
+
 Skip the planner only when ALL of these hold: the change is small (about one file or a few lines); the request is unambiguous; the approach is obvious with no design choices; and no exploration is needed to know where or what to edit. State the skip in one line with the reason. When in doubt, plan. Multi-file changes, new features, refactors, bug fixes with an unknown root cause, and changes that touch behavior across components always get a plan.
 
 Model ids below were present in `bb provider models <provider> --environment env_chay9bmgz7` on this machine. Re-check the live catalog before spawning if the catalog may have changed. A spawn override sets provider, model, and reasoning level together. Omitting all three inherits the parent.
