@@ -244,11 +244,7 @@ const INTERVIEWER_PROCEDURE = [
 
 export function procedure(_providerId: string, role: Role): string {
   if (role === "regular") {
-    return [
-      "Role: regular.",
-      "Do the work in this session.",
-      "Do not call spawn.",
-    ].join(" ");
+    return "Role: regular. This is the default thread: do the work in this session and use any agents or tools you need.";
   }
   if (role === "interviewer") return INTERVIEWER_PROCEDURE;
   return [

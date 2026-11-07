@@ -7,7 +7,7 @@ description: Read the composer Role control before development work. Use when ch
 
 Call the `role_choice` tool before a development task. Follow the role it returns.
 
-Regular means do the work in this session. Do not launch the Cursor cantrip agents or the Claude explorer, planner, and worker.
+Regular is the default thread: it does the work in this session and may use any agents or tools it needs.
 
 Orchestrator means spawn only. Call `spawn` with `name` set to `explore`, `contribute`, `plan`, or `review`. Those are the only four. Planning is the default: spawn `plan` before any `contribute`, and skip it only when the change is small (about one file or a few lines), unambiguous, has an obvious approach with no design choices, and needs no exploration. State the skip in one line. When in doubt, plan. `contribute` is the worker and the only one that edits. Explore may use the terminal. Do not use the Task tool. On Cursor they run the cantrip agents. Every spawned agent starts with full access in BB.
 
