@@ -69,7 +69,7 @@ function Ensure-Junction($live, $repo) {
 function Invoke-Bb {
   $cli = $env:BB_CLI
   if ($cli -and (Test-Path -LiteralPath $cli -PathType Leaf)) {
-    if ([IO.Path]::GetExtension($cli) -in '.js', '.mjs', '.cjs') { & node $cli @args } else { & $cli @args }
+    if ([IO.Path]::GetExtension($cli) -in '', '.js', '.mjs', '.cjs') { & node $cli @args } else { & $cli @args }
   } else { & bb @args }
 }
 
