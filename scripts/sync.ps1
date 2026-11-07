@@ -21,6 +21,40 @@ if ($PSVersionTable.PSVersion.Major -lt 7 -and (Get-Command pwsh -ErrorAction Si
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib.ps1"
 
+# Pulls and pushes with the bogxxx gh account's token (override with BB_SETUP_GH_USER), like
+# sync.sh. The active gh account is never switched: bb's Copilot integration depends on it.
+# The token goes through GIT_CONFIG_* env vars, not the command line.
+function Invoke-GitAuth {
+  $user = if ($env:BB_SETUP_GH_USER) { $env:BB_SETUP_GH_USER } else { 'bogxxx' }
+  $token = try { gh auth token --user $user 2>$null } catch { $null }
+  if (-not $token) { git -C $Repo @args; return }
+  $basic = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$token"))
+  # Append to any GIT_CONFIG_* entries already set (bb sets some) instead of replacing them.
+  $n = [int]("0$env:GIT_CONFIG_COUNT")
+  $saved = $env:GIT_CONFIG_COUNT
+  $env:GIT_CONFIG_COUNT = "$($n + 1)"
+  Set-Item "env:GIT_CONFIG_KEY_$n" 'http.https://github.com/.extraheader'
+  Set-Item "env:GIT_CONFIG_VALUE_$n" "AUTHORIZATION: basic $basic"
+  try { git -C $Repo @args }
+  finally {
+    $env:GIT_CONFIG_COUNT = $saved
+    Remove-Item "env:GIT_CONFIG_KEY_$n", "env:GIT_CONFIG_VALUE_$n" -ErrorAction SilentlyContinue
+  }
+}
+
+if (-not $DryRun) {
+  Write-Host 'Pull:'
+  $ErrorActionPreference = 'Continue'
+  if (git -C $Repo status --porcelain) {
+    Write-Host '  skipped: working tree has changes'
+  } else {
+    Invoke-GitAuth pull -q --rebase
+    if ($LASTEXITCODE) { throw "git pull --rebase failed ($LASTEXITCODE); resolve it, then run sync again" }
+    Write-Host '  up to date'
+  }
+  $ErrorActionPreference = 'Stop'
+}
+
 Write-Host 'Files:'
 foreach ($f in $CopiedFiles) { Sync-File $f.Live $f.Repo }
 
@@ -89,7 +123,7 @@ try {
     Write-Host 'No changes.'
     # Still push commits made outside this script (for example by git am).
     if (-not $NoPush -and (git rev-list --count '@{u}..HEAD' 2>$null) -gt 0) {
-      git push -q; if ($LASTEXITCODE) { throw "git push failed ($LASTEXITCODE)" }
+      Invoke-GitAuth push -q; if ($LASTEXITCODE) { throw "git push failed ($LASTEXITCODE)" }
       Write-Host 'Pushed.'
     }
     return
@@ -98,7 +132,7 @@ try {
   if ($LASTEXITCODE) { throw "git commit failed ($LASTEXITCODE)" }
   Write-Host "Committed: $Message"
   if (-not $NoPush) {
-    git push -q; if ($LASTEXITCODE) { throw "git push failed ($LASTEXITCODE)" }
+    Invoke-GitAuth push -q; if ($LASTEXITCODE) { throw "git push failed ($LASTEXITCODE)" }
     Write-Host 'Pushed.'
   }
 } finally { Pop-Location }
