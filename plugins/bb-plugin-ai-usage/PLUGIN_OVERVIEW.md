@@ -4,6 +4,7 @@ AI Usage shows every Claude Code, Codex and Grok subscription your team shares, 
 
 - **Attention first.** A window that is out, one that will run out before its reset, a machine that stopped reporting or whose tool fails, an old release, a subscription nobody uses.
 - **Subscriptions.** Each one's limiting windows, with what is left, when they reset, and the forecast at reset.
+- **Claude limits, each apart.** A Claude subscription shows its 5-hour session, its weekly limit across models, and each weekly family the binary reports (Fable, Opus, Sonnet), with an "Extra usage" line from BB's Account Pooler when a pooled account matches its email.
 - **Devices × subscriptions.** Weighted tokens of every machine on every subscription, today, over 7, 30 or 90 days.
 - **Cost.** The team's subscriptions a month, how much of them the team used over 4 weeks, the next charge, and the questions ai-usage asks, answered on the page.
 - **Team usage** in the sidebar footer: the top three alerts and a bar for each subscription.

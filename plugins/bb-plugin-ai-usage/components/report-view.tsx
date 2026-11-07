@@ -9,12 +9,14 @@ import {
   ago,
   attentionTone,
   attentionWords,
+  cardWindows,
   clock,
   deviceName,
   duration,
+  extraUsageWords,
   forecastLine,
+  known,
   left,
-  limitingWindows,
   matrixNote,
   matrixView,
   plan,
@@ -22,6 +24,7 @@ import {
   share,
   shortName,
   usd,
+  windowLabel,
 } from "../src/format";
 import { PERIODS, type CostQuestion, type Period, type Report, type TeamAccount } from "../src/report";
 import { Badge, Bar, Dot, Section } from "./bits";
@@ -85,7 +88,8 @@ function Subscriptions({ report, now, timeZone }: ReportProps) {
       <div className="grid gap-3 sm:grid-cols-2">
         {groups.flatMap((g) =>
           g.accounts.map((a) => {
-            const windows = limitingWindows(a);
+            const windows = cardWindows(g.provider, a);
+            const extra = a.extra_usage !== null && g.provider === "claude" ? extraUsageWords(a.extra_usage) : null;
             return (
               <div key={`${g.provider}/${a.label}`} className="space-y-2 rounded-lg border border-border bg-card p-3">
                 <div className="flex items-center justify-between gap-2">
@@ -102,7 +106,7 @@ function Subscriptions({ report, now, timeZone }: ReportProps) {
                   return (
                     <div key={w.name} className="space-y-1">
                       <div className="flex items-baseline justify-between gap-2 text-xs">
-                        <span className="text-muted-foreground">{shortName(a, w.name)}</span>
+                        <span className="text-muted-foreground">{g.provider === "claude" ? windowLabel(w) : shortName(a, w.name)}</span>
                         <span>
                           <span className="font-medium">{left(w)}</span> left
                           {w.resets_at !== null ? (
@@ -110,11 +114,16 @@ function Subscriptions({ report, now, timeZone }: ReportProps) {
                           ) : null}
                         </span>
                       </div>
-                      <Bar percent={w.percent} state={w.state} />
+                      <Bar percent={known(w) ? w.percent : 0} state={known(w) ? w.state : "unknown"} />
                       {forecast !== null ? <div className="text-[11px] text-muted-foreground">{forecast}</div> : null}
                     </div>
                   );
                 })}
+                {extra !== null ? (
+                  <div className="text-[11px] text-muted-foreground" title={a.extra_usage?.observed_at ? `Observed ${ago(a.extra_usage.observed_at, now)}` : undefined}>
+                    {extra}
+                  </div>
+                ) : null}
                 {windows.length === 0 && a.no_reading !== null ? <div className="text-xs text-muted-foreground">{a.no_reading}</div> : null}
                 {windows.length === 0 && a.no_reading === null ? <div className="text-xs text-muted-foreground">No reading of its limits yet</div> : null}
                 <div className="text-[11px] text-muted-foreground">

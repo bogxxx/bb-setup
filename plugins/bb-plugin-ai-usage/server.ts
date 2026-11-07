@@ -17,6 +17,7 @@ import { fillMatrixFromBurn, mergeCopilotColumns } from "./src/burn-matrix.js";
 import { applyCursorUsage } from "./src/cursor-usage.js";
 import { machineInMatrix, mergeMeasured } from "./src/local-providers.js";
 import { readReport, SchemaError, type Report, type Usage } from "./src/report.js";
+import { applyPoolExtraUsage, poolStatusSchema, type PoolStatus } from "./src/pool.js";
 import { readTaken } from "./src/take.js";
 import { rpcContract, type HostView, type JobKind, type JobView } from "./src/rpc.js";
 
@@ -211,6 +212,21 @@ export default async function plugin(bb: BbPluginApi) {
     cursorTokens?: Usage | null;
   }
 
+  /** The account pool's accounts, or none when the pool is absent or does not answer in time. */
+  async function poolAccounts(): Promise<PoolStatus["accounts"]> {
+    try {
+      const status = await withDeadline(
+        bb.sdk.plugins.callRpc({ pluginId: "account-pool", method: "status.get", input: null, outputSchema: poolStatusSchema }),
+        15_000,
+        "the account pool",
+      );
+      return status.accounts;
+    } catch (error) {
+      bb.log.warn(`extra usage from the account pool failed: ${error instanceof Error ? error.message : String(error)}`);
+      return [];
+    }
+  }
+
   /**
    * Adds every persistent machine to the report: its logins, its matrix row and
    * its burn. The work runs on a copy that then replaces the cached report, so a
@@ -271,9 +287,10 @@ export default async function plugin(bb: BbPluginApi) {
       const tokens = reading !== null ? (reading.cursorTokens ?? null) : (snap?.cursorTokens ?? null);
       if (tokens !== null) applyCursorUsage(next, machine.id, tokens);
     }
+    const reported = applyPoolExtraUsage(next, await poolAccounts());
     const stored = cache(reportHostId);
-    stored.report = next;
-    stored.hash = createHash("sha256").update(JSON.stringify(next)).digest("hex").slice(0, 32);
+    stored.report = reported;
+    stored.hash = createHash("sha256").update(JSON.stringify(reported)).digest("hex").slice(0, 32);
     stored.reportAt = Date.now();
   }
 

@@ -4,7 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { attentionWords, limitingWindows, matrixView, shown, tokenLabel, tokensM } from "../src/format";
+import { attentionWords, cardWindows, extraUsageWords, left, limitingWindows, matrixView, shown, tokenLabel, tokensM, windowLabel } from "../src/format";
 import { readReport, SchemaError } from "../src/report";
 
 // The repository demo reports sit beside the plugin only in the monorepo. The vendored copy
@@ -93,4 +93,59 @@ test("a kind it does not know is shown with the report's words", () => {
 test("another schema is refused", () => {
   expect(() => readReport({ schema_version: 5 })).toThrow(SchemaError);
   expect(() => readReport({ schema_version: 3, generated_at: "2026-09-24T13:40:00Z" })).toThrow(SchemaError);
+});
+
+test("a Claude card shows the session, the weekly limit, and each family window the binary reports", () => {
+  const raw = demo("team.json");
+  const mira = raw.team.providers.find((p: { provider: string }) => p.provider === "claude").accounts[0];
+  mira.quota.windows.push({ ...mira.quota.windows[1], name: "7d Fable", main: false, limits: false });
+  const r = readReport(raw);
+  const a = r.team.providers.find((p) => p.provider === "claude")!.accounts[0]!;
+  const windows = cardWindows("claude", a);
+  expect(windows.map((w) => w.name)).toEqual(["5h", "7d", "7d Fable"]);
+  expect(windows.map(windowLabel)).toEqual(["5-hour", "Weekly · all models", "Weekly · Fable"]);
+});
+
+test("a Claude card lists its families in name order after the weekly limit", () => {
+  const raw = demo("team.json");
+  const mira = raw.team.providers.find((p: { provider: string }) => p.provider === "claude").accounts[0];
+  mira.quota.windows.push({ ...mira.quota.windows[1], name: "7d Sonnet", main: false, limits: false }, { ...mira.quota.windows[1], name: "7d Opus", main: false, limits: false });
+  const a = readReport(raw).team.providers.find((p) => p.provider === "claude")!.accounts[0]!;
+  expect(cardWindows("claude", a).map((w) => w.name)).toEqual(["5h", "7d", "7d Opus", "7d Sonnet"]);
+});
+
+test("other providers' cards show what limits them, as before", () => {
+  const r = readReport(demo("team.json"));
+  for (const p of r.team.providers.filter((x) => x.provider !== "claude")) {
+    for (const a of p.accounts) expect(cardWindows(p.provider, a)).toEqual(limitingWindows(a));
+  }
+});
+
+test("an unknown Claude window is kept, and its label is the report's name", () => {
+  const raw = demo("team.json");
+  const mira = raw.team.providers.find((p: { provider: string }) => p.provider === "claude").accounts[0];
+  mira.quota.windows.push({ ...mira.quota.windows[1], name: "1d Burst", main: false, limits: false, reset: true, minutes: 1440 });
+  const a = readReport(raw).team.providers.find((p) => p.provider === "claude")!.accounts[0]!;
+  const burst = cardWindows("claude", a).find((w) => w.name === "1d Burst")!;
+  expect(left(burst)).toBe("?");
+  expect(windowLabel(burst)).toBe("1d Burst");
+});
+
+test("window labels name the session, the weekly limit, and a family", () => {
+  const w = (name: string) => ({ name, percent: 0, resets_at: null, minutes: null, main: false, limits: false, stale: false, reset: false, unread: null, state: "ok", forecast: null });
+  expect(windowLabel(w("5h"))).toBe("5-hour");
+  expect(windowLabel(w("7d"))).toBe("Weekly · all models");
+  expect(windowLabel(w("7d Opus"))).toBe("Weekly · Opus");
+  expect(windowLabel(w("Claude Opus 5.5"))).toBe("Claude Opus 5.5");
+});
+
+test("extra usage is read when the report has it, and null when it does not", () => {
+  const raw = demo("team.json");
+  const old = readReport(raw).team.providers[0]!.accounts[0]!;
+  expect(old.extra_usage).toBeNull();
+  raw.team.providers[0].accounts[0].extra_usage = { status: "allowed", observed_at: "2026-11-07T10:00:00Z" };
+  expect(readReport(raw).team.providers[0]!.accounts[0]!.extra_usage).toEqual({ status: "allowed", observed_at: "2026-11-07T10:00:00Z" });
+  expect(extraUsageWords({ status: "rejected", observed_at: null })).toBe("Extra usage: off or spent");
+  expect(extraUsageWords({ status: "allowed", observed_at: null })).toBe("Extra usage: available");
+  expect(extraUsageWords({ status: "other", observed_at: null })).toBeNull();
 });

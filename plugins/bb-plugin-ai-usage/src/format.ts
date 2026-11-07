@@ -1,7 +1,7 @@
 // How the panel prints the report's numbers and times, the way the menu bar
 // app does (macos/Sources/AIUsageKit/Format.swift, Glance.swift). It picks
 // among what the report decided and works out nothing of its own.
-import type { Attention, MatrixCell, MatrixColumn, MatrixRow, Report, Share, TeamAccount, TeamDevice, Usage, Window } from "./report.js";
+import type { Attention, ExtraUsage, MatrixCell, MatrixColumn, MatrixRow, Report, Share, TeamAccount, TeamDevice, Usage, Window } from "./report.js";
 
 export const NONE = "–";
 
@@ -159,6 +159,42 @@ export function limitingWindows(a: TeamAccount): Window[] {
     .sort((x, y) => percentLeft(x.w) - percentLeft(y.w) || x.i - y.i)
     .map(({ w }) => w);
   return [first, ...others];
+}
+
+/** A Claude family window: "7d Fable", "7d Opus". */
+function isFamily(w: Window): boolean {
+  return /^7d .+/.test(w.name);
+}
+
+/**
+ * Every window of an account's quota, for its card. Claude shows each limit
+ * apart: the 5-hour session, then the weekly limit across models, then each
+ * weekly family the binary reports, by name. Other providers show what limits
+ * them, as `limitingWindows` has it.
+ */
+export function cardWindows(providerId: string, a: TeamAccount): Window[] {
+  if (providerId !== "claude") return limitingWindows(a);
+  const windows = a.quota?.windows ?? [];
+  const byLength = (x: Window, y: Window) => (x.minutes ?? Infinity) - (y.minutes ?? Infinity);
+  const sessions = windows.filter((w) => !w.main && !isFamily(w)).sort(byLength);
+  const weekly = windows.filter((w) => w.main);
+  const families = windows.filter(isFamily).sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0));
+  return [...sessions, ...weekly, ...families];
+}
+
+/** A window's name on a Claude card: "5-hour", "Weekly · all models", "Weekly · Fable"; else the report's name. */
+export function windowLabel(w: Window): string {
+  if (w.name === "5h") return "5-hour";
+  if (w.name === "7d") return "Weekly · all models";
+  if (isFamily(w)) return `Weekly · ${w.name.slice("7d ".length)}`;
+  return w.name;
+}
+
+/** The extra usage line of a Claude account, or null when the pool has no word or one this plugin does not know. */
+export function extraUsageWords(e: ExtraUsage): string | null {
+  if (e.status === "allowed") return "Extra usage: available";
+  if (e.status === "rejected") return "Extra usage: off or spent";
+  return null;
 }
 
 /** The pace a window's forecast takes, as the report names it. */

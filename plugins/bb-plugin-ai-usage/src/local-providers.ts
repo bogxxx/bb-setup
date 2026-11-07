@@ -70,6 +70,7 @@ function card(name: string, device: string, windows: Window[], extra: Partial<Te
     busiest: null,
     last_active_at: null,
     no_reading: extra.no_reading ?? null,
+    extra_usage: null,
   };
 }
 

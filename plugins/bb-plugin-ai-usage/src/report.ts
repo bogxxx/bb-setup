@@ -103,6 +103,13 @@ export interface TeamAccount {
   busiest: string | null;
   last_active_at: string | null;
   no_reading: string | null;
+  /** The account pool's word on extra usage, when a pool account matches this one; null otherwise. */
+  extra_usage: ExtraUsage | null;
+}
+
+export interface ExtraUsage {
+  status: string;
+  observed_at: string | null;
 }
 
 export interface TeamDevice {
@@ -231,6 +238,12 @@ function share(v: unknown): Share {
   return { today: onum(o.today), "7d": onum(o["7d"]), "30d": onum(o["30d"]), "90d": onum(o["90d"]) };
 }
 const oshare = (v: unknown): Share | null => (v === null || v === undefined ? null : share(v));
+
+function extraUsage(v: unknown): ExtraUsage | null {
+  if (v === null || v === undefined) return null;
+  const o = obj(v);
+  return { status: str(o.status), observed_at: ostr(o.observed_at) };
+}
 
 function window(v: unknown): Window {
   const o = obj(v);
@@ -364,6 +377,7 @@ export function readReport(raw: unknown): Report {
               busiest: ostr(x.busiest),
               last_active_at: ostr(x.last_active_at),
               no_reading: ostr(x.no_reading),
+              extra_usage: extraUsage(x.extra_usage),
             };
           }),
         };
