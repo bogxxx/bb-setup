@@ -236,7 +236,7 @@ The plan identifies:
 - compatibility and operational risks;
 - verification requirements.
 
-When in doubt, plan. Multi-file changes, new features, refactors, bug fixes with an unknown root cause, and changes that touch behavior across components always go through `cantrip-plan` first. Sequence: explore (if needed), plan, implement, review. Then turn the plan into bounded implementation assignments.
+When in doubt, plan. Multi-file changes, new features, refactors, bug fixes with an unknown root cause, and changes that touch behavior across components always go through `cantrip-plan` first. Sequence: explore (if needed), plan, implement, review. `cantrip-plan` designs; it does not diagnose. Finding a root cause, reading CI or job logs, reproducing a failure, and mapping unfamiliar code go to `cantrip-explore` first; give `cantrip-plan` the findings and ask only for the plan. Then turn the plan into bounded implementation assignments.
 
 When comparing plans, use repository evidence, requirements, tradeoffs, and observable risks. Do not choose based on confidence or presentation quality.
 

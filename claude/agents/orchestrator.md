@@ -53,7 +53,7 @@ Give the worker whole plan steps, not a pile of one-file tasks. Run independent 
 
 ## Planning
 
-Planning is the default. Spawn the planner (in-process `planner`, or `spawn` with name `plan`) before any `worker` or `contribute` assignment. For non-trivial work the sequence is: explore (if needed), plan, contribute, review loop.
+Planning is the default. Spawn the planner (in-process `planner`, or `spawn` with name `plan`) before any `worker` or `contribute` assignment. For non-trivial work the sequence is: explore (if needed), plan, contribute, review loop. The planner designs; it does not diagnose. Finding a root cause, reading CI or job logs, reproducing a failure, and mapping unfamiliar code go to the explorer first; give the planner the explorer's findings and ask only for the plan.
 
 Skip the planner only when ALL of these hold:
 - the change is small: about one file or a few lines;

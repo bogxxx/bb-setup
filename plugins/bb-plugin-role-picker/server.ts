@@ -231,7 +231,7 @@ const ORCHESTRATOR_WAITING = [
 
 const INTERVIEWER_PROCEDURE = [
   "Role: prompt generator. You work like a business analyst: you turn the user's idea into a prompt for an Orchestrator thread. You do not do the work.",
-  "Read-only. Do not create, edit, or delete files, do not commit, and run only read-only commands. Do not call spawn except with name explore (or bb roles spawn explore when the spawn tool is missing), only in a non-Personal project, and only for a narrow question whose answer depends on codebase facts. Wait with bb thread wait <id> --timeout 4m, repeated while the explorer is still running (never longer per call, so the prompt cache stays warm), then read bb thread output <id>. Never spawn contribute, plan, or review.",
+  "Read-only. Do not create, edit, or delete files, do not commit, and run only read-only commands. Do not call spawn except with name explore (or bb plugin run role-picker spawn explore when the spawn tool is missing), only in a non-Personal project, and only for a narrow question whose answer depends on codebase facts. Wait with bb thread wait <id> --timeout 4m, repeated while the explorer is still running (never longer per call, so the prompt cache stays warm), then read bb thread output <id>. Never spawn contribute, plan, or review.",
   "Context first, briefly. Run bb status once (if bb fails, use node \"$BB_CLI\" status). If the project is Personal (proj_personal), there is no project, or the check fails, do not read, list, or search any files: interview only. In any other project, take one quick look inside the thread's workspace only (README, top-level layout, files plainly tied to the topic), then start asking. Never read or search outside the workspace (home folders, vaults, other repos), never grep recursively over large trees, and run no other bb diagnostics. Your first message to the user is a question.",
   "Ask through the AskUserQuestion tool (the question card), one question at a time, or at most three independent ones in one call. Never put a wall of questions in chat. Give 2-4 concrete options, put the one you recommend first and mark it, and let the user write their own answer. If the tool is missing, dismissed, or times out, ask that one question in your reply and end the turn.",
   "Order. Ask a question only once the answers it depends on are settled. Cover what the task needs: the goal and the problem behind it; who it is for and what outcome means success; scope and explicit non-goals; constraints (technology, compatibility, security, data, time, cost); acceptance criteria that can be checked; priorities and what to cut first; risks, unknowns, and dependencies. Keep a helicopter view. Go into technical detail only where it changes scope, risk, or acceptance.",
@@ -251,6 +251,7 @@ export function procedure(_providerId: string, role: Role): string {
     "You spawn only. Do not explore, plan, contribute, or review in this session yourself: delegate with spawn or the Task tool.",
     "Call spawn with name explore, contribute, plan, or review. The assignment is only the task.",
     "Planning is the default: spawn plan before any contribute. Skip it only when ALL hold: the change is small (about one file or a few lines), the request is unambiguous, the approach is obvious with no design choices, and no exploration is needed to know where or what to edit. State the skip in one line. When in doubt, plan. Multi-file changes, new features, refactors, bug fixes with an unknown root cause, and cross-component behavior always get a plan. Sequence: explore (if needed), plan, contribute, review.",
+    PLAN_IS_DESIGN,
     "spawn returns the thread id as soon as the thread exists. " + ORCHESTRATOR_WAITING,
     "Do not name the model and do not say which agent it is. spawn reads that from the agent file.",
     "explore may use the terminal. contribute is the only one that edits.",
@@ -261,9 +262,19 @@ export function procedure(_providerId: string, role: Role): string {
   ].join(" ");
 }
 
+const PLAN_IS_DESIGN =
+  "plan designs; it does not diagnose. Finding a root cause, reading CI or job logs, reproducing a failure, and mapping unfamiliar code are explore's work, so a bug with an unknown cause is explore first, then plan. Give plan the explorer's findings (cause, evidence, paths) and ask only for the implementation plan. Never ask plan to investigate or find a root cause.";
+
+function planProtocol(): string {
+  return [
+    "Plan only. Your assignment carries the findings. Read only the code, tests, and configuration needed to design the change and confirm those findings.",
+    "Do not diagnose: do not fetch CI or job logs, reproduce failures, or search for an unknown root cause. If the assignment asks you to find a cause, or its findings are missing or contradicted by the code, stop and report the specific questions the explorer must answer instead of investigating.",
+  ].join("\n");
+}
+
 // GitHub Copilot rejects BB's stdio tool bridge (bb-bridge), so spawn and role_choice never reach it.
 const SPAWN_FALLBACK =
-  "If spawn or role_choice is not in your tool list (GitHub Copilot does not load BB plugin tools), use the same thing from the terminal: bb roles show prints your role, and bb roles spawn <explore|contribute|plan|review> --assignment-file <path> [--worker <thr_id>] spawns exactly like the spawn tool (write the assignment to a file under $BB_THREAD_STORAGE, or pass --assignment <text>). Never stop and report that spawn is missing.";
+  "If spawn or role_choice is not in your tool list (GitHub Copilot does not load BB plugin tools), use the same thing from the terminal: bb plugin run role-picker show prints your role, and bb plugin run role-picker spawn <explore|contribute|plan|review> --assignment-file <path> [--worker <thr_id>] spawns exactly like the spawn tool (write the assignment to a file under $BB_THREAD_STORAGE, or pass --assignment <text>). Use that bb plugin run form, not the bb roles shorthand: on Windows the shorthand can crash at exit with a libuv assertion and a non-zero code even though the command worked. Never stop and report that spawn is missing.";
 
 function reviewerProtocol(workerId: string, replaces?: string): string {
   return [
@@ -349,7 +360,7 @@ export default async function plugin(bb: BbPluginApi) {
     description:
       "Spawn one of the four agents: explore, contribute, plan, or review. Plan before any contribute unless the change is small and obvious. Returns the thread id immediately. A review takes the contribute thread id as worker and sends its defects straight to that worker. The orchestrator does no other work. The prompt generator role may call spawn with name explore only.",
     instructions:
-      "Orchestrators delegate with spawn (or the Task tool for short in-session work). If this spawn tool is missing (GitHub Copilot does not load BB plugin tools), run bb roles spawn <name> --assignment-file <path> [--worker <thr_id>] instead; it is identical. The only names are explore, contribute, plan, and review. contribute is the worker. Planning is the default: spawn plan before contribute, and skip it only when the change is small, unambiguous, obvious, and needs no exploration (state the skip in one line). spawn returns the thread id immediately, and bb wakes you when that thread ends its turn: end your turn instead of polling. Review loop: spawn contribute and read its report when woken; then spawn review with worker set to the contribute thread id. The reviewer sends defects to that worker and reports to you only at the end: CLEAN, or ESCALATE. Ignore wake-ups from the worker's fix rounds while its reviewer runs. Read bb thread output <id> before using a report. The prompt generator role may call spawn with name explore only.",
+      "Orchestrators delegate with spawn (or the Task tool for short in-session work). If this spawn tool is missing (GitHub Copilot does not load BB plugin tools), run bb plugin run role-picker spawn <name> --assignment-file <path> [--worker <thr_id>] instead; it is identical. The only names are explore, contribute, plan, and review. contribute is the worker. plan only designs: root causes, logs, and investigation go to explore first, and plan gets the findings. Planning is the default: spawn plan before contribute, and skip it only when the change is small, unambiguous, obvious, and needs no exploration (state the skip in one line). spawn returns the thread id immediately, and bb wakes you when that thread ends its turn: end your turn instead of polling. Review loop: spawn contribute and read its report when woken; then spawn review with worker set to the contribute thread id. The reviewer sends defects to that worker and reports to you only at the end: CLEAN, or ESCALATE. Ignore wake-ups from the worker's fix rounds while its reviewer runs. Read bb thread output <id> before using a report. The prompt generator role may call spawn with name explore only.",
     presentation: {
       label: { pending: "Spawning agent", completed: "Spawned agent" },
     },
@@ -366,7 +377,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   type SpawnResult = { ok: boolean; text: string };
 
-  /** Shared by the spawn tool and `bb roles spawn`: GitHub Copilot drops BB's stdio tool bridge, so it needs the CLI. */
+  /** Shared by the spawn tool and `bb plugin run role-picker spawn`: GitHub Copilot drops BB's stdio tool bridge, so it needs the CLI. */
   async function spawnAgent(
     threadId: string,
     { name, assignment, worker: workerParam }: { name: SpawnName; assignment: string; worker?: string },
@@ -433,7 +444,7 @@ export default async function plugin(bb: BbPluginApi) {
       }
       const spec = spawnSpec(parent.providerId, name);
       const defined = spec.agent ? agentDefinition(spec.agent, (message) => bb.log.warn(message)) : undefined;
-      const protocol = name === "contribute" ? workerProtocol() : "";
+      const protocol = name === "contribute" ? workerProtocol() : name === "plan" ? planProtocol() : "";
       const prompt = [
         defined?.body,
         "Assignment:\n" + body,
@@ -651,7 +662,7 @@ export default async function plugin(bb: BbPluginApi) {
   bb.agents.registerTool({
     name: "role_choice",
     description: "Read the role selected in the composer Role control for this thread.",
-    instructions: "Call role_choice before development work and follow the role it returns. If role_choice is not in your tool list, run bb roles show instead.",
+    instructions: "Call role_choice before development work and follow the role it returns. If role_choice is not in your tool list, run bb plugin run role-picker show instead.",
     presentation: {
       label: { pending: "Reading role", completed: "Read role" },
     },
@@ -674,7 +685,7 @@ export default async function plugin(bb: BbPluginApi) {
     const saved = readRole(context.pluginMetadata.role);
     const instructions = saved
       ? procedure(context.provider.id, saved)
-      : "No role is saved on this thread yet. Call role_choice (or run bb roles show if that tool is missing) and follow what it returns. Regular does the work in this session. Orchestrator delegates. Prompt generator interviews the user and writes a prompt for an Orchestrator thread; it does not edit.";
+      : "No role is saved on this thread yet. Call role_choice (or run bb plugin run role-picker show if that tool is missing) and follow what it returns. Regular does the work in this session. Orchestrator delegates. Prompt generator interviews the user and writes a prompt for an Orchestrator thread; it does not edit.";
     // The tool list is fixed when the provider session is built, but the role can be saved
     // later (first dispatch, or a Role switch mid-session). Always expose spawn; execute()
     // refuses it unless the live role is orchestrator.
