@@ -486,9 +486,12 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   // A plugin start or a machine's connection refreshes that machine without waiting for a poll.
-  void refreshConnected("start").catch((error: unknown) => {
-    bb.log.warn(`refresh after start failed: ${error instanceof Error ? error.message : String(error)}`);
-  });
+  // Host calls are refused during factory registration, so the start refresh waits for the plugin to run.
+  const startRefresh = setTimeout(() => {
+    void refreshConnected("start").catch((error: unknown) => {
+      bb.log.warn(`refresh after start failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }, 2_000);
   const unsubscribeHosts = bb.sdk.subscribe({
     event: "host:changed",
     callback: (event) => {
@@ -689,6 +692,7 @@ export default async function plugin(bb: BbPluginApi) {
   });
 
   bb.onDispose(() => {
+    clearTimeout(startRefresh);
     unsubscribeHosts();
     refresher.dispose();
     caches.clear();
