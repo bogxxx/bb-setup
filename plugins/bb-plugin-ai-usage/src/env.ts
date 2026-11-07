@@ -18,7 +18,7 @@ export function standardDirs(home: string): string[] {
     // install.ps1 puts the binary here and adds the folder to the user PATH.
     // A BB host started before that PATH change still has to find it.
     ...(localAppData ? [path.join(localAppData, "Programs", "ai-usage")] : []),
-    path.join(home, "AppData", "Local", "Programs", "ai-usage"),
+    ...(process.platform === "win32" ? [path.join(home, "AppData", "Local", "Programs", "ai-usage")] : []),
   ];
 }
 

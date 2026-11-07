@@ -63,16 +63,15 @@ describe("argon quota", () => {
     { modelId: "gpt-oss-120b-medium", remainingFraction: 1, resetTime: reset },
   ];
 
-  test("an argon bucket with remainingFraction 0 is not 100% left inside the Gemini bar", () => {
+  test("an argon bucket with remainingFraction 0 is its own meter at 0% left, and the models keep theirs", () => {
     for (const modelId of ["gemini-4-argon", "argon"]) {
       const windows = gravityWindows([...healthy, { modelId, remainingFraction: 0, resetTime: "2026-11-01T00:00:00Z" }], now);
-      const combined = windows.find((window) => window.name === "Gemini, Claude, GPT");
-      const argon = windows.find((window) => window.name === "Argon");
-      expect(combined).toBeDefined();
-      expect(percentLeft(combined!)).toBe(100);
+      const argon = windows.find((window) => window.name.endsWith("Argon"));
       expect(argon).toBeDefined();
       expect(percentLeft(argon!)).toBe(0);
-      expect(windows.some((window) => window.name.includes("Gemini") && window.name.includes("Argon"))).toBe(false);
+      expect(windows.filter((window) => window.name !== argon!.name).map((window) => percentLeft(window))).toEqual([100, 100, 100]);
+      expect(windows.find((window) => window.name === "Gemini, Claude, GPT")).toBeUndefined();
+      expect(windows[0]).toEqual(argon!);
     }
   });
 
@@ -80,8 +79,8 @@ describe("argon quota", () => {
     const past = gravityWindows([...healthy, { modelId: "gemini-4-argon", remainingFraction: 1, resetTime: "2026-11-01T00:00:00Z" }], now);
     const marked = gravityWindows([...healthy, { modelId: "gemini-4-argon", remainingFraction: 1, resetTime: reset, exhausted: true }], now);
     for (const windows of [past, marked]) {
-      expect(percentLeft(windows.find((window) => window.name === "Argon")!)).toBe(0);
-      expect(windows.find((window) => window.name === "Gemini, Claude, GPT")).toBeDefined();
+      expect(percentLeft(windows.find((window) => window.name.endsWith("Argon"))!)).toBe(0);
+      expect(windows).toHaveLength(4);
     }
   });
 });

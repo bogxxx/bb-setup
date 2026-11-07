@@ -31,6 +31,7 @@ ai-usage also sends its author usage stats, through PostHog: how often it runs, 
 
 - Removing the plugin leaves ai-usage collecting. Settings → AI Usage → Remove ai-usage takes it off a machine first.
 - ai-usage reads Claude Code, Codex, Grok and Hermes. BB's Cursor, OpenCode and Pi agents are not counted.
+- Antigravity shows one meter per model (effort variants share one, at the worst of them), not one per family. A model with no remaining fraction in its quota bucket is shown as used up, since Google omits zero values.
 - Sessions that BB's Account Pooler routes count for the login of the folder that holds their logs, which may not be the account that served them. Such a machine is marked "Account Pooler" on the page. A machine that runs only pooled Claude Code is marked after a run inside a BB thread.
 - Anything that runs in this BB as you, agents included, can read the team report through this plugin and ask it for the team key, as it can read ai-usage's own files. The plugin answers no other plugin, keeps no copy of the key, and logs neither the key nor the report.
 - Clocks in the report are in the time zone of the machine BB runs on.
