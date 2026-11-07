@@ -231,7 +231,7 @@ const ORCHESTRATOR_WAITING = [
 
 const INTERVIEWER_PROCEDURE = [
   "Role: prompt generator. You work like a business analyst: you turn the user's idea into a prompt for an Orchestrator thread. You do not do the work.",
-  "Read-only. Do not create, edit, or delete files, do not commit, and run only read-only commands. Do not call spawn except with name explore, only in a non-Personal project, and only for a narrow question whose answer depends on codebase facts. Wait with bb thread wait <id> --timeout 4m, repeated while the explorer is still running (never longer per call, so the prompt cache stays warm), then read bb thread output <id>. Never spawn contribute, plan, or review.",
+  "Read-only. Do not create, edit, or delete files, do not commit, and run only read-only commands. Do not call spawn except with name explore (or bb roles spawn explore when the spawn tool is missing), only in a non-Personal project, and only for a narrow question whose answer depends on codebase facts. Wait with bb thread wait <id> --timeout 4m, repeated while the explorer is still running (never longer per call, so the prompt cache stays warm), then read bb thread output <id>. Never spawn contribute, plan, or review.",
   "Context first, briefly. Run bb status once (if bb fails, use node \"$BB_CLI\" status). If the project is Personal (proj_personal), there is no project, or the check fails, do not read, list, or search any files: interview only. In any other project, take one quick look inside the thread's workspace only (README, top-level layout, files plainly tied to the topic), then start asking. Never read or search outside the workspace (home folders, vaults, other repos), never grep recursively over large trees, and run no other bb diagnostics. Your first message to the user is a question.",
   "Ask through the AskUserQuestion tool (the question card), one question at a time, or at most three independent ones in one call. Never put a wall of questions in chat. Give 2-4 concrete options, put the one you recommend first and mark it, and let the user write their own answer. If the tool is missing, dismissed, or times out, ask that one question in your reply and end the turn.",
   "Order. Ask a question only once the answers it depends on are settled. Cover what the task needs: the goal and the problem behind it; who it is for and what outcome means success; scope and explicit non-goals; constraints (technology, compatibility, security, data, time, cost); acceptance criteria that can be checked; priorities and what to cut first; risks, unknowns, and dependencies. Keep a helicopter view. Go into technical detail only where it changes scope, risk, or acceptance.",
@@ -248,7 +248,7 @@ export function procedure(_providerId: string, role: Role): string {
   }
   if (role === "interviewer") return INTERVIEWER_PROCEDURE;
   return [
-    "You spawn only. Do not explore, plan, contribute, or review in this session.",
+    "You spawn only. Do not explore, plan, contribute, or review in this session yourself: delegate with spawn or the Task tool.",
     "Call spawn with name explore, contribute, plan, or review. The assignment is only the task.",
     "Planning is the default: spawn plan before any contribute. Skip it only when ALL hold: the change is small (about one file or a few lines), the request is unambiguous, the approach is obvious with no design choices, and no exploration is needed to know where or what to edit. State the skip in one line. When in doubt, plan. Multi-file changes, new features, refactors, bug fixes with an unknown root cause, and cross-component behavior always get a plan. Sequence: explore (if needed), plan, contribute, review.",
     "spawn returns the thread id as soon as the thread exists. " + ORCHESTRATOR_WAITING,
@@ -256,9 +256,14 @@ export function procedure(_providerId: string, role: Role): string {
     "explore may use the terminal. contribute is the only one that edits.",
     "Review loop: spawn contribute first and read its report when bb wakes you. Then spawn review with worker set to the contribute thread id. The reviewer sends defects straight to that worker, which fixes them and replies, up to two rounds. A wake-up from the worker's fix round (output starting FIXED round or BLOCKED) while its reviewer is still running needs no action: end your turn again. Act on the reviewer's output alone: CLEAN, or ESCALATE with the findings left. On ESCALATE, tell the same worker what to do next, or ask the user.",
     "Each review runs on a provider other than the worker's. If a reviewer stops on a provider quota, the plugin moves the review to the next provider and messages you the new reviewer thread id: use that one's report instead. If a reviewer ends in error and no such message comes, spawn review again with the same worker; spawn skips providers that are out of quota.",
-    "Do not use the Task tool.",
+    SPAWN_FALLBACK,
+    "You may also use the Task tool (in-session subagents such as explorer, planner, worker, reviewer) for short, bounded delegation. Use spawn for anything that should be its own bb thread, and always for review.",
   ].join(" ");
 }
+
+// GitHub Copilot rejects BB's stdio tool bridge (bb-bridge), so spawn and role_choice never reach it.
+const SPAWN_FALLBACK =
+  "If spawn or role_choice is not in your tool list (GitHub Copilot does not load BB plugin tools), use the same thing from the terminal: bb roles show prints your role, and bb roles spawn <explore|contribute|plan|review> --assignment-file <path> [--worker <thr_id>] spawns exactly like the spawn tool (write the assignment to a file under $BB_THREAD_STORAGE, or pass --assignment <text>). Never stop and report that spawn is missing.";
 
 function reviewerProtocol(workerId: string, replaces?: string): string {
   return [
@@ -344,7 +349,7 @@ export default async function plugin(bb: BbPluginApi) {
     description:
       "Spawn one of the four agents: explore, contribute, plan, or review. Plan before any contribute unless the change is small and obvious. Returns the thread id immediately. A review takes the contribute thread id as worker and sends its defects straight to that worker. The orchestrator does no other work. The prompt generator role may call spawn with name explore only.",
     instructions:
-      "Orchestrators call spawn only. The only names are explore, contribute, plan, and review. contribute is the worker. Planning is the default: spawn plan before contribute, and skip it only when the change is small, unambiguous, obvious, and needs no exploration (state the skip in one line). spawn returns the thread id immediately, and bb wakes you when that thread ends its turn: end your turn instead of polling. Review loop: spawn contribute and read its report when woken; then spawn review with worker set to the contribute thread id. The reviewer sends defects to that worker and reports to you only at the end: CLEAN, or ESCALATE. Ignore wake-ups from the worker's fix rounds while its reviewer runs. Read bb thread output <id> before using a report. The prompt generator role may call spawn with name explore only.",
+      "Orchestrators delegate with spawn (or the Task tool for short in-session work). If this spawn tool is missing (GitHub Copilot does not load BB plugin tools), run bb roles spawn <name> --assignment-file <path> [--worker <thr_id>] instead; it is identical. The only names are explore, contribute, plan, and review. contribute is the worker. Planning is the default: spawn plan before contribute, and skip it only when the change is small, unambiguous, obvious, and needs no exploration (state the skip in one line). spawn returns the thread id immediately, and bb wakes you when that thread ends its turn: end your turn instead of polling. Review loop: spawn contribute and read its report when woken; then spawn review with worker set to the contribute thread id. The reviewer sends defects to that worker and reports to you only at the end: CLEAN, or ESCALATE. Ignore wake-ups from the worker's fix rounds while its reviewer runs. Read bb thread output <id> before using a report. The prompt generator role may call spawn with name explore only.",
     presentation: {
       label: { pending: "Spawning agent", completed: "Spawned agent" },
     },
@@ -353,10 +358,23 @@ export default async function plugin(bb: BbPluginApi) {
       assignment: z.string().min(1),
       worker: z.string().min(1).optional().describe("Required for review: the contribute thread id whose diff is reviewed. Not used by the other names."),
     }).strict(),
-    async execute({ name, assignment, worker: workerParam }, ctx) {
+    async execute(input, ctx) {
+      const result = await spawnAgent(ctx.threadId, input);
+      return { ...(result.ok ? {} : { isError: true }), content: [{ type: "text" as const, text: result.text }] };
+    },
+  });
+
+  type SpawnResult = { ok: boolean; text: string };
+
+  /** Shared by the spawn tool and `bb roles spawn`: GitHub Copilot drops BB's stdio tool bridge, so it needs the CLI. */
+  async function spawnAgent(
+    threadId: string,
+    { name, assignment, worker: workerParam }: { name: SpawnName; assignment: string; worker?: string },
+  ): Promise<SpawnResult> {
+      const ctx = { threadId };
       const parent = await bb.sdk.threads.get({ threadId: ctx.threadId });
       const mode = await roleForThread(ctx.threadId);
-      const fail = (text: string) => ({ isError: true, content: [{ type: "text" as const, text }] });
+      const fail = (text: string): SpawnResult => ({ ok: false, text });
       const allowed = mode.role === "orchestrator" || (mode.role === "interviewer" && name === "explore");
       if (!allowed) {
         return fail(mode.role === "interviewer"
@@ -404,15 +422,13 @@ export default async function plugin(bb: BbPluginApi) {
           return fail(`No reviewer is available: every review provider for a ${parent.providerId} worker (${chainProviders(record)}) is out of quota or unavailable. Ask the user.`);
         }
         return {
-          content: [{
-            type: "text" as const,
-            text: [
-              `Spawned review as ${spawned.id} on ${spawned.providerId}. Status: ${spawned.status}.`,
-              "spawn returns when the thread exists. It does not wait for the agent.",
-              "If this reviewer stops on a provider quota, you get a message with the replacement reviewer id; use that one's report instead.",
-              ...whenDone(spawned.id),
-            ].join("\n"),
-          }],
+          ok: true,
+          text: [
+            `Spawned review as ${spawned.id} on ${spawned.providerId}. Status: ${spawned.status}.`,
+            "spawn returns when the thread exists. It does not wait for the agent.",
+            "If this reviewer stops on a provider quota, you get a message with the replacement reviewer id; use that one's report instead.",
+            ...whenDone(spawned.id),
+          ].join("\n"),
         };
       }
       const spec = spawnSpec(parent.providerId, name);
@@ -443,15 +459,74 @@ export default async function plugin(bb: BbPluginApi) {
       });
 
       return {
-        content: [{
-          type: "text" as const,
-          text: [
-            `Spawned ${name} as ${child.id}. Status: ${child.status}.`,
-            "spawn returns when the thread exists. It does not wait for the agent.",
-            ...whenDone(child.id),
-          ].join("\n"),
-        }],
+        ok: true,
+        text: [
+          `Spawned ${name} as ${child.id}. Status: ${child.status}.`,
+          "spawn returns when the thread exists. It does not wait for the agent.",
+          ...whenDone(child.id),
+        ].join("\n"),
       };
+  }
+
+  bb.cli.register({
+    name: "roles",
+    summary: "Role picker: show this thread's role, or spawn explore/contribute/plan/review (the spawn tool, for providers without BB plugin tools such as GitHub Copilot)",
+    commands: [
+      { name: "show", summary: "Print this thread's role and its procedure (same as role_choice)", usage: "bb roles show" },
+      {
+        name: "spawn",
+        summary: "Spawn explore, contribute, plan, or review from this thread (same as the spawn tool)",
+        usage: "bb roles spawn <explore|contribute|plan|review> (--assignment <text> | --assignment-file <path>) [--worker <thr_id>]",
+      },
+    ],
+    async run(argv, cli) {
+      const fail = (stderr: string, exitCode = 1) => ({ exitCode, stderr: stderr + "\n" });
+      const threadId = cli.threadId;
+      if (!threadId) return fail("Run this from a bb thread (BB_THREAD_ID is not set).");
+      const [command, ...rest] = argv;
+      if (command === "show") {
+        const found = await roleForThread(threadId);
+        const thread = await bb.sdk.threads.get({ threadId });
+        return { exitCode: 0, stdout: `${procedure(thread.providerId, found.role)} Source: ${found.source}. ${APPLIES}\n` };
+      }
+      if (command !== "spawn") return fail("Usage: bb roles show | bb roles spawn <explore|contribute|plan|review> (--assignment <text> | --assignment-file <path>) [--worker <thr_id>]", 2);
+      const parsedName = spawnName.safeParse(rest[0]);
+      if (!parsedName.success) return fail(`bb roles spawn needs a name: explore, contribute, plan, or review. Got "${rest[0] ?? ""}".`, 2);
+      const options: Record<string, string> = {};
+      for (let i = 1; i < rest.length; i++) {
+        const match = /^--(assignment|assignment-file|worker)(?:=(.*))?$/s.exec(rest[i]);
+        if (!match) return fail(`Unknown argument "${rest[i]}". Use --assignment, --assignment-file, or --worker.`, 2);
+        const value = match[2] ?? rest[++i];
+        if (value === undefined) return fail(`--${match[1]} needs a value.`, 2);
+        options[match[1]] = value;
+      }
+      if (options.assignment !== undefined && options["assignment-file"] !== undefined) {
+        return fail("Pass --assignment or --assignment-file, not both.", 2);
+      }
+      let assignment = options.assignment;
+      if (options["assignment-file"] !== undefined) {
+        // The path is on the invoking thread's machine, not necessarily the server's.
+        const thread = await bb.sdk.threads.get({ threadId });
+        const hostId = thread.environmentId
+          ? (await bb.sdk.environments.get({ environmentId: thread.environmentId })).hostId
+          : undefined;
+        const filePath = options["assignment-file"];
+        const absolute = /^([a-zA-Z]:[\\/]|[\\/])/.test(filePath) || !cli.cwd ? filePath : path.join(cli.cwd, filePath);
+        try {
+          const file = await bb.sdk.files.read({ path: absolute, ...(hostId ? { hostId } : {}) });
+          if (!("content" in file)) return fail(`Could not read ${absolute}.`);
+          assignment = file.contentEncoding === "base64" ? Buffer.from(file.content, "base64").toString("utf8") : file.content;
+        } catch (error) {
+          return fail(`Could not read ${absolute}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      if (!assignment?.trim()) return fail("bb roles spawn needs a non-empty --assignment or --assignment-file.", 2);
+      const result = await spawnAgent(threadId, {
+        name: parsedName.data,
+        assignment,
+        ...(options.worker ? { worker: options.worker } : {}),
+      });
+      return result.ok ? { exitCode: 0, stdout: result.text + "\n" } : fail(result.text);
     },
   });
 
@@ -576,7 +651,7 @@ export default async function plugin(bb: BbPluginApi) {
   bb.agents.registerTool({
     name: "role_choice",
     description: "Read the role selected in the composer Role control for this thread.",
-    instructions: "Call role_choice before development work and follow the role it returns.",
+    instructions: "Call role_choice before development work and follow the role it returns. If role_choice is not in your tool list, run bb roles show instead.",
     presentation: {
       label: { pending: "Reading role", completed: "Read role" },
     },
@@ -599,7 +674,7 @@ export default async function plugin(bb: BbPluginApi) {
     const saved = readRole(context.pluginMetadata.role);
     const instructions = saved
       ? procedure(context.provider.id, saved)
-      : "No role is saved on this thread yet. Call role_choice and follow what it returns. Regular does the work in this session. Orchestrator delegates. Prompt generator interviews the user and writes a prompt for an Orchestrator thread; it does not edit.";
+      : "No role is saved on this thread yet. Call role_choice (or run bb roles show if that tool is missing) and follow what it returns. Regular does the work in this session. Orchestrator delegates. Prompt generator interviews the user and writes a prompt for an Orchestrator thread; it does not edit.";
     // The tool list is fixed when the provider session is built, but the role can be saved
     // later (first dispatch, or a Role switch mid-session). Always expose spawn; execute()
     // refuses it unless the live role is orchestrator.
