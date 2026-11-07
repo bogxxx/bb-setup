@@ -1,0 +1,19 @@
+#!/bin/sh
+PATH='/opt/homebrew/bin':"$PATH"
+export PATH
+# host-daemon/dist/bb is installed mode 644. bb re-execs BB_CLI and exits 0 on EACCES,
+# so a non-executable BB_CLI runs under node. This file has no launcher marker.
+if [ -n "${BB_CLI:-}" ] && [ -f "$BB_CLI" ] && [ ! -x "$BB_CLI" ]; then
+  exec node "$BB_CLI" "$@"
+fi
+if [ -n "${BB_DATA_DIR:-}" ] && [ -x "$BB_DATA_DIR/npm/bin/bb" ]; then
+  exec "$BB_DATA_DIR/npm/bin/bb" "$@"
+fi
+if [ -x "$HOME/.bb-machines/bogxxx.getbb.app/npm/bin/bb" ]; then exec "$HOME/.bb-machines/bogxxx.getbb.app/npm/bin/bb" "$@"; fi
+unset BB_DATA_DIR
+for candidate in "$HOME"/.bb-machines/*/npm/bin/bb; do
+  if [ -x "$candidate" ]; then exec "$candidate" "$@"; fi
+done
+if [ "${1:-}" = machine ] && [ "${2:-}" = uninstall ]; then exit 0; fi
+printf '%s\n' 'No installed bb machine CLI is available.' >&2
+exit 1

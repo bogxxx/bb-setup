@@ -38,11 +38,13 @@ done
 
 # Live path -> repo path. On macOS both folders and files are symlinked, so
 # editing either side changes the same file. copilot-acp.cmd is Windows-only.
-# ~/.local/bin is on the bb daemon's PATH, so the bare "copilot-acp" resolves there.
+# ~/.local/bin is on the bb daemon's PATH, so the bare "bb" and "copilot-acp"
+# resolve there. bb/bin/bb runs a non-executable BB_CLI under node.
 LINKS=(
   "$CLAUDE_DIR/agents|$REPO/claude/agents"
   "$BB_DIR/AGENTS.md|$REPO/bb/AGENTS.md"
   "$CLAUDE_DIR/CLAUDE.md|$REPO/claude/CLAUDE.md"
+  "$HOME/.local/bin/bb|$REPO/bb/bin/bb"
   "$HOME/.local/bin/copilot-acp|$REPO/bb/bin/copilot-acp"
   "$HOME/.copilot/agents/orchestrator.agent.md|$REPO/copilot/agents/orchestrator.agent.md"
   "$HOME/.copilot/agents/explorer.agent.md|$REPO/copilot/agents/explorer.agent.md"
@@ -81,6 +83,17 @@ git_auth() {
     -c 'credential.helper=!f() { echo username=x-access-token; echo "password=$GIT_SETUP_TOKEN"; }; f' "$@"
 }
 
+# host-daemon/dist/bb ships mode 644, and a later bb-app install drops +x again.
+# bb/bin/bb still runs that file under node. A repair failure must not stop the sync.
+repair_exec() {
+  local path="$1"
+  if [ -f "$path" ] && [ ! -x "$path" ]; then
+    chmod +x "$path" || true
+    echo "  chmod +x $path"
+  fi
+  return 0
+}
+
 ensure_link() {
   local live="$1" target="$2"
   if [ -L "$live" ] && [ "$(readlink "$live")" = "$target" ]; then return; fi
@@ -107,6 +120,12 @@ if [ "$DRY" = 0 ]; then
 
   echo "Links:"
   for pair in "${LINKS[@]}"; do ensure_link "${pair%%|*}" "${pair#*|}"; done
+
+  echo "Repairs:"
+  if [ -n "${BB_CLI:-}" ]; then repair_exec "$BB_CLI" || true; fi
+  for cli in "$HOME"/.bb-machines/*/npm/lib/node_modules/bb-app/host-daemon/dist/bb; do
+    repair_exec "$cli" || true
+  done
 fi
 
 if [ "$PLUGINS" = 1 ]; then
