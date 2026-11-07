@@ -32,7 +32,7 @@ Folders are live: editing them here changes what bb and Claude use right away. W
    .\scripts\sync.ps1 -m "What changed"
    ```
 
-   This copies the files, exports the plugin list and settings, then commits and pushes. `-DryRun` shows what would change, and `-NoPush` commits without pushing.
+   This copies the files, exports the plugin list and settings, then commits and pushes. `-DryRun` pulls, copies and links nothing and writes nothing to the repo: it prints the diffs of `bb/plugins.json` and `bb/plugin-settings.json` against the committed files and commits nothing. `-NoPush` commits without pushing.
 
 `~/.bb/AGENTS.md` tells every bb agent to run `sync.ps1` after it changes the setup, so agent changes reach GitHub too.
 
@@ -72,7 +72,7 @@ git -C ~/src/bb-setup remote set-url origin https://github.com/bogxxx/bb-setup
 
 Plugins and plugin settings are exported from the bb server the CLI is connected to, whether it runs on this Mac, on another host, or on Windows. The script detects a local server by checking that the server's data dir exists on this machine. For a remote server, a `path:` plugin's directory is not on this machine, so its source is kept as the server reports it and not probed locally. `--no-plugins` skips the export.
 
-The script runs bb through `BB_CLI` (the bb entry point; a non-executable one runs under `node`), not bare `bb` on PATH. A bb command that fails or prints nothing stops the script before anything is committed, so `bb/plugins.json` and `bb/plugin-settings.json` are never written partially or with dropped fields. `--dry-run` writes the two files, prints their diff against HEAD and commits nothing.
+The script runs bb through `BB_CLI` (the bb entry point; a non-executable one runs under `node`), not bare `bb` on PATH. A bb command that fails or prints nothing stops the script before anything is committed, so `bb/plugins.json` and `bb/plugin-settings.json` are never written partially or with dropped fields. `--dry-run` pulls nothing, links nothing, and writes nothing to the repo or home folder. It prints the diffs of `bb/plugins.json` and `bb/plugin-settings.json` against the committed files and commits nothing.
 
 Git pulls and pushes use the `bogxxx` gh account's token for that one command. The script never runs `gh auth switch`, because bb's Copilot integration depends on the active gh account. Set `BB_SETUP_GH_USER` to use another account.
 

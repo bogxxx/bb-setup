@@ -64,4 +64,37 @@ function Ensure-Junction($live, $repo) {
   Write-Host "  linked $live -> $repo"
 }
 
-function Get-BbPlugins { (bb plugin list --json | Out-String | ConvertFrom-Json).plugins }
+# bb runs from $env:BB_CLI when it is set (a .js entry point runs under node), else bb on PATH.
+# bb on PATH can fail silently in agent sandboxes, so sync.ps1 and install.ps1 use this.
+function Invoke-Bb {
+  $cli = $env:BB_CLI
+  if ($cli -and (Test-Path -LiteralPath $cli -PathType Leaf)) {
+    if ([IO.Path]::GetExtension($cli) -in '.js', '.mjs', '.cjs') { & node $cli @args } else { & $cli @args }
+  } else { & bb @args }
+}
+
+# A bb query that fails closed: a non-zero exit or empty output throws, so nothing is written.
+function Get-BbText($What, [string[]]$Argv) {
+  $text = Invoke-Bb @Argv | Out-String
+  if ($LASTEXITCODE) { throw "$What failed ($LASTEXITCODE); nothing written" }
+  if (-not $text.Trim()) { throw "$What printed nothing; nothing written" }
+  $text
+}
+
+function Get-BbJson($What, [string[]]$Argv) {
+  $text = Get-BbText $What $Argv
+  try { $text | ConvertFrom-Json } catch { throw "$What printed invalid JSON; nothing written" }
+}
+
+# The data dir of the bb server the CLI is connected to.
+function Get-BbDataDir {
+  $status = Get-BbText 'bb status' @('status')
+  if ($status -match '(?m)^Data dir:\s*(.+?)\s*$') { return $Matches[1] }
+  throw 'bb status shows no Data dir; nothing written'
+}
+
+function Get-BbPlugins {
+  $plugins = (Get-BbJson 'bb plugin list' @('plugin', 'list', '--json')).plugins
+  if (-not $plugins) { throw 'bb plugin list returned no plugins; nothing written' }
+  @($plugins)
+}

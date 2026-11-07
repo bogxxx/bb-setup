@@ -8,7 +8,7 @@
 #   scripts/sync.sh                    # commit with a default message
 #   scripts/sync.sh -m "Add X plugin"  # your message
 #   scripts/sync.sh --no-push          # capture and commit only
-#   scripts/sync.sh --dry-run          # capture bb/*.json, print its diff against HEAD, commit nothing
+#   scripts/sync.sh --dry-run          # print the bb/*.json diffs; write nothing to the repo, commit nothing
 #   scripts/sync.sh --no-plugins       # skip the plugin export
 #
 # A bb command that fails or prints nothing stops the script before anything is
@@ -97,20 +97,22 @@ ensure_link() {
   ln -s "$target" "$live"; echo "  linked $live -> $target"
 }
 
-echo "Pull:"
-if [ -z "$(git -C "$REPO" status --porcelain)" ]; then
-  git_auth pull -q --rebase && echo "  up to date"
-else
-  echo "  skipped: working tree has changes"
-fi
+if [ "$DRY" = 0 ]; then
+  echo "Pull:"
+  if [ -z "$(git -C "$REPO" status --porcelain)" ]; then
+    git_auth pull -q --rebase && echo "  up to date"
+  else
+    echo "  skipped: working tree has changes"
+  fi
 
-echo "Links:"
-for pair in "${LINKS[@]}"; do ensure_link "${pair%%|*}" "${pair#*|}"; done
+  echo "Links:"
+  for pair in "${LINKS[@]}"; do ensure_link "${pair%%|*}" "${pair#*|}"; done
+fi
 
 if [ "$PLUGINS" = 1 ]; then
   echo "Plugins:"
-  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-  fail() { echo "error: $*; plugin export stopped, nothing committed" >&2; exit 1; }
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT; mkdir -p "$tmp/out"
+  fail() { echo "error: $*; plugin export stopped, nothing written or committed" >&2; exit 1; }
 
   status="$(bb status)" || fail "bb status failed"
   data_dir="$(printf '%s\n' "$status" | sed -n 's/^Data dir: //p')"
@@ -125,7 +127,8 @@ if [ "$PLUGINS" = 1 ]; then
   node -e '
     const fs = require("fs");
     const { plugins } = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-    const ids = (keep) => plugins.filter(keep).map(p => p.id).sort().map(id => id + "\n").join("");
+    if (!Array.isArray(plugins) || plugins.length === 0) throw new Error("bb plugin list has no plugins array");
+    const ids =(keep) => plugins.filter(keep).map(p => p.id).sort().map(id => id + "\n").join("");
     fs.writeFileSync(process.argv[2], ids(p => p.hasSettings));
     fs.writeFileSync(process.argv[3], ids(p => !p.source.startsWith("builtin:") && !p.source.startsWith("path:")));
   ' "$tmp/plugins.json" "$tmp/settings-ids" "$tmp/git-ids" || fail "could not read bb plugin list"
@@ -145,8 +148,9 @@ if [ "$PLUGINS" = 1 ]; then
 
   node -e '
     const fs = require("fs"), path = require("path"), cp = require("child_process");
-    const [tmp, repo, home, serverLocal] = process.argv.slice(1);
+    const [tmp, repo, home, serverLocal, out] = process.argv.slice(1);
     const { plugins } = JSON.parse(fs.readFileSync(path.join(tmp, "plugins.json"), "utf8"));
+    if (!Array.isArray(plugins) || plugins.length === 0) throw new Error("bb plugin list has no plugins array");
     const installed = [], builtinsEnabled = {};
     for (const p of [...plugins].sort((a, b) => a.id.localeCompare(b.id))) {
       if (p.source.startsWith("builtin:")) { builtinsEnabled[p.id] = !!p.enabled; continue; }
@@ -172,32 +176,42 @@ if [ "$PLUGINS" = 1 ]; then
     const settings = {};
     for (const p of plugins.filter(p => p.hasSettings).sort((a, b) => a.id.localeCompare(b.id))) {
       const cfg = JSON.parse(fs.readFileSync(path.join(tmp, `config-${p.id}.json`), "utf8"));
+      if (!(cfg && cfg.ok === true && cfg.schema && typeof cfg.schema === "object" && cfg.values && typeof cfg.values === "object"))
+        throw new Error(`bb plugin config ${p.id} has no ok/schema/values`);
       const changed = {};
-      for (const [key, schema] of Object.entries(cfg.schema || {})) {
+      for (const [key, schema] of Object.entries(cfg.schema)) {
         if (schema.secret) continue;
-        const value = (cfg.values || {})[key];
+        const value = cfg.values[key];
         if (value === null || value === undefined) continue;
         if (schema.default !== undefined && schema.default !== null ? String(value) === String(schema.default) : String(value) === "") continue;
         changed[key] = value;
       }
       if (Object.keys(changed).length) settings[p.id] = changed;
     }
-    fs.writeFileSync(path.join(repo, "bb/plugins.json"), JSON.stringify({ installed, builtinsEnabled }, null, 2) + "\n");
-    fs.writeFileSync(path.join(repo, "bb/plugin-settings.json"), JSON.stringify(settings, null, 2) + "\n");
+    fs.writeFileSync(path.join(out, "plugins.json"), JSON.stringify({ installed, builtinsEnabled }, null, 2) + "\n");
+    fs.writeFileSync(path.join(out, "plugin-settings.json"), JSON.stringify(settings, null, 2) + "\n");
     console.log(`  ${installed.length} installed plugins, ${Object.keys(settings).length} with custom settings`);
-  ' "$tmp" "$REPO" "$HOME" "$server_local" || fail "could not write the plugin files"
+  ' "$tmp" "$REPO" "$HOME" "$server_local" "$tmp/out" || fail "bb plugin data did not validate"
+
+  # Written only after every bb query and validation above succeeded.
+  if [ "$DRY" = 1 ]; then
+    diff -u "$REPO/bb/plugins.json" "$tmp/out/plugins.json" || true
+    diff -u "$REPO/bb/plugin-settings.json" "$tmp/out/plugin-settings.json" || true
+  else
+    cp "$tmp/out/plugins.json" "$REPO/bb/plugins.json"
+    cp "$tmp/out/plugin-settings.json" "$REPO/bb/plugin-settings.json"
+  fi
 fi
 
 cd "$REPO"
+if [ "$DRY" = 1 ]; then
+  echo "Dry run: nothing written to the repo or committed; diffs above"
+  git status --short
+  exit 0
+fi
 # role-picker ships the agent files it spawns with; generate them from claude/agents and cursor/agents.
 node "$(dirname "$0")/../plugins/bb-plugin-role-picker/scripts/gen-agents.mjs"
 git add -A
-if [ "$DRY" = 1 ]; then
-  git status --short
-  git diff --cached -- bb/
-  git reset -q
-  exit 0
-fi
 if [ -z "$(git status --porcelain)" ]; then echo "No changes."; exit 0; fi
 git commit -q -m "$MESSAGE"
 echo "Committed: $MESSAGE"

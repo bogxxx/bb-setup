@@ -4,7 +4,7 @@ Captures the live BB setup into this repo, then commits and pushes.
   .\scripts\sync.ps1                    # commit with a default message
   .\scripts\sync.ps1 -m "Add X plugin"  # your message
   .\scripts\sync.ps1 -NoPush            # capture and commit only
-  .\scripts\sync.ps1 -DryRun            # capture only, show git status
+  .\scripts\sync.ps1 -DryRun            # print the bb\*.json diffs; write nothing to the repo, commit nothing
 #>
 param([Alias('m')][string]$Message = 'Sync BB setup', [switch]$NoPush, [switch]$DryRun)
 
@@ -55,13 +55,20 @@ if (-not $DryRun) {
   $ErrorActionPreference = 'Stop'
 }
 
-Write-Host 'Files:'
-foreach ($f in $CopiedFiles) { Sync-File $f.Live $f.Repo }
+if (-not $DryRun) {
+  Write-Host 'Files:'
+  foreach ($f in $CopiedFiles) { Sync-File $f.Live $f.Repo }
 
-Write-Host 'Links:'
-foreach ($d in $LinkedDirs) { Ensure-Junction $d.Live $d.Repo }
+  Write-Host 'Links:'
+  foreach ($d in $LinkedDirs) { Ensure-Junction $d.Live $d.Repo }
+}
 
+# Every bb query runs and is validated before anything is written. A remote server's data dir
+# is not on this machine, so its path plugins are kept as the server reports them.
 Write-Host 'Plugins:'
+$dataDir = Get-BbDataDir
+$serverLocal = Test-Path -LiteralPath $dataDir -PathType Container
+Write-Host "  bb server is $(if ($serverLocal) { 'local' } else { 'remote' }) ($dataDir)"
 $plugins = Get-BbPlugins
 $repoFull = (Resolve-Path $Repo).Path.TrimEnd('\')
 $installed = @(); $builtins = [ordered]@{}
@@ -69,12 +76,14 @@ foreach ($p in ($plugins | Sort-Object id)) {
   if ($p.source -like 'builtin:*') { $builtins[$p.id] = [bool]$p.enabled; continue }
   $entry = [ordered]@{ id = $p.id; source = $p.source; enabled = [bool]$p.enabled }
   if ($p.source -notlike 'path:*') {
-    # A git plugin may live in a subdirectory of its repo; bb records that, so the manifest keeps it.
-    $said = (bb plugin source $p.id | Out-String)
-    if ($LASTEXITCODE -or $said -notmatch '(?m)^\s*requested:') { throw "bb plugin source $($p.id) failed or printed no source; nothing written" }
+    # The requested source and any subdirectory of a git plugin's repo come from bb plugin source.
+    $said = Get-BbText "bb plugin source $($p.id)" @('plugin', 'source', $p.id)
+    $req = [regex]::Match($said, '(?m)^\s*requested:\s*(.+?)\s*$')
+    if (-not $req.Success) { throw "bb plugin source $($p.id) reported no requested source; nothing written" }
+    $entry.source = $req.Groups[1].Value
     if ($said -match '(?m)^\s*subdirectory:\s*(.+?)\s*$') { $entry.subdirectory = $Matches[1] }
   }
-  if ($p.source -like 'path:*') {
+  if ($p.source -like 'path:*' -and $serverLocal) {
     $path = $p.source.Substring(5)
     if ($path.StartsWith($repoFull, [StringComparison]::OrdinalIgnoreCase)) {
       $entry.source = 'repo:' + $path.Substring($repoFull.Length + 1).Replace('\', '/')
@@ -82,19 +91,20 @@ foreach ($p in ($plugins | Sort-Object id)) {
       # Under 5.1 with 'Stop', redirected stderr from a native command throws.
       $origin = try { git -C $path remote get-url origin 2>$null } catch { $null }
       if ($origin) { $entry.clone = $origin; $entry.path = $path.Replace($HOME, '~') }
-      else { Write-Warning "$($p.id) is a local path outside the repo with no git remote: $path" }
+      else { Write-Warning "$($p.id) is a local path outside the repo with no git remote, kept as $($p.source)" }
     }
   }
   $installed += $entry
 }
-$manifest = [ordered]@{ installed = $installed; builtinsEnabled = $builtins }
-New-Item -ItemType Directory -Force "$Repo\bb" | Out-Null
-$manifest | ConvertTo-Json -Depth 5 | Set-Content "$Repo\bb\plugins.json" -Encoding utf8
+$manifestJson = [ordered]@{ installed = $installed; builtinsEnabled = $builtins } | ConvertTo-Json -Depth 5
 
 # Plugin settings: only values that differ from the default, never secret fields.
 $settings = [ordered]@{}
 foreach ($p in ($plugins | Where-Object { $_.hasSettings } | Sort-Object id)) {
-  $cfg = bb plugin config $p.id --json | Out-String | ConvertFrom-Json
+  $cfg = Get-BbJson "bb plugin config $($p.id)" @('plugin', 'config', $p.id, '--json')
+  if ($cfg.ok -ne $true -or $null -eq $cfg.schema -or $null -eq $cfg.values) {
+    throw "bb plugin config $($p.id) has no ok/schema/values; nothing written"
+  }
   $changed = [ordered]@{}
   foreach ($prop in $cfg.schema.PSObject.Properties) {
     $key = $prop.Name; $schema = $prop.Value
@@ -107,7 +117,27 @@ foreach ($p in ($plugins | Where-Object { $_.hasSettings } | Sort-Object id)) {
   }
   if ($changed.Count) { $settings[$p.id] = $changed }
 }
-$settings | ConvertTo-Json -Depth 5 | Set-Content "$Repo\bb\plugin-settings.json" -Encoding utf8
+$settingsJson = $settings | ConvertTo-Json -Depth 5
+
+if ($DryRun) {
+  # Write the new files to a temp folder, show their diffs against the committed files, and leave the repo alone.
+  $out = Join-Path ([IO.Path]::GetTempPath()) "bb-sync-$([guid]::NewGuid().ToString('N'))"
+  New-Item -ItemType Directory -Force $out | Out-Null
+  Set-Content -Path (Join-Path $out 'plugins.json') -Value $manifestJson -Encoding utf8
+  Set-Content -Path (Join-Path $out 'plugin-settings.json') -Value $settingsJson -Encoding utf8
+  foreach ($name in 'plugins.json', 'plugin-settings.json') {
+    git diff --no-index -- "$Repo\bb\$name" (Join-Path $out $name)
+  }
+  Remove-Item -Recurse -Force $out
+  Write-Host "  $($installed.Count) installed plugins, $($settings.Count) with custom settings"
+  Write-Host 'Dry run: nothing written to the repo or committed; diffs above'
+  git -C $Repo status --short
+  return
+}
+# Everything above read and validated; only now are the repo files written.
+New-Item -ItemType Directory -Force "$Repo\bb" | Out-Null
+Set-Content -Path "$Repo\bb\plugins.json" -Value $manifestJson -Encoding utf8
+Set-Content -Path "$Repo\bb\plugin-settings.json" -Value $settingsJson -Encoding utf8
 Write-Host "  $($installed.Count) installed plugins, $($settings.Count) with custom settings"
 
 # Git writes warnings (CRLF, push hints) to stderr; check exit codes instead of letting
@@ -119,7 +149,6 @@ Push-Location $Repo
 try {
   git -c core.safecrlf=false add -A
   if ($LASTEXITCODE) { throw "git add failed ($LASTEXITCODE)" }
-  if ($DryRun) { git status --short; return }
   if (-not (git status --porcelain)) {
     Write-Host 'No changes.'
     # Still push commits made outside this script (for example by git am).
