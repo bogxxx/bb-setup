@@ -760,6 +760,94 @@ export function gravitySummaryWindows(raw: unknown, now = Date.now()): Window[] 
   return out;
 }
 
+/** One row of `agy -p "/quota"`: a category, a limit's label, the share left, and when it resets. */
+export interface AgyRow {
+  category: string;
+  label: string;
+  remaining: number;
+  resetsAt: string | null;
+}
+
+const AGY_CATEGORY_NAMES: Record<string, string> = { "Gemini Models": "Gemini", "Claude and GPT models": "Claude & GPT" };
+const AGY_KIND_NAMES: Record<string, string> = { "five hour": "5-hour" };
+
+/**
+ * The rows of `agy -p "/quota"`: tab-separated category, label, "NN%" left, and an ISO reset time.
+ * Any other line is ignored, and a row whose reset time is unreadable keeps its percentage.
+ */
+export function parseAgyQuota(text: string): AgyRow[] {
+  const rows: AgyRow[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const [category = "", label = "", percent = "", reset = ""] = line.split("\t").map((cell) => cell.trim());
+    const match = /^(\d{1,3}(?:\.\d+)?)%$/.exec(percent);
+    if (category === "" || label === "" || match === null) continue;
+    const remaining = Number(match[1]);
+    if (remaining > 100) continue;
+    const resetsAt = PROBE_TIME.test(reset) && Number.isFinite(Date.parse(reset)) ? reset : null;
+    rows.push({ category, label, remaining, resetsAt });
+  }
+  return rows;
+}
+
+/** A row's window name part: its label without "Remaining" and "Limit" and the category, as "weekly" or "5-hour". */
+function agyKind(category: string, label: string): string {
+  let rest = label.replace(/\s+Remaining$/i, "").replace(/\s+Limit$/i, "").trim();
+  if (rest.toLowerCase().startsWith(category.toLowerCase())) rest = rest.slice(category.length).trim();
+  const key = rest.toLowerCase();
+  return AGY_KIND_NAMES[key] ?? (key === "" ? label : key);
+}
+
+/**
+ * The windows of `agy -p "/quota"`, one per category and limit. Argon's rows come first, then the
+ * categories in the order agy prints them, and each category's 5-hour limit before its weekly one.
+ * The Argon row is 100 minus the share left, and the first Argon row is main. A repeated name is dropped.
+ */
+export function gravityAgyWindows(rows: readonly AgyRow[]): Window[] {
+  const seen = new Set<string>();
+  const entries: { name: string; used: number; reset: string | null; argon: boolean; category: number; rank: number }[] = [];
+  for (const row of rows) {
+    const kind = agyKind(row.category, row.label);
+    const name = `${AGY_CATEGORY_NAMES[row.category] ?? row.category} · ${kind}`;
+    if (seen.has(name)) continue;
+    seen.add(name);
+    entries.push({
+      name,
+      used: 100 - row.remaining,
+      reset: row.resetsAt,
+      argon: isArgon(row.category),
+      category: rows.findIndex((r) => r.category === row.category),
+      rank: kind === "5-hour" ? 0 : kind === "weekly" ? 1 : 2,
+    });
+  }
+  entries.sort((a, b) => Number(b.argon) - Number(a.argon) || a.category - b.category || a.rank - b.rank);
+  return entries.map((e, i) => meter(e.name, e.used, e.reset, i === 0 && e.argon));
+}
+
+/**
+ * The Gravity card's windows: agy's rows first, then retrieveUserQuota's per-model rows, then the shared
+ * Claude & GPT rows. When agy gave an Argon row it replaces retrieveUserQuota's Argon rows and is main,
+ * and a shared row that agy already gave is dropped.
+ */
+export function joinGravityWindows(agy: readonly Window[], models: readonly Window[], shared: readonly Window[]): Window[] {
+  const argon = agy.some((w) => /argon/i.test(w.name));
+  const names = new Set(agy.map((w) => w.name));
+  return [
+    ...agy,
+    ...models.filter((w) => !(argon && /argon/i.test(w.name))).map((w) => (argon ? { ...w, main: false } : w)),
+    ...shared.filter((w) => !names.has(w.name)),
+  ];
+}
+
+/** `agy -p "/quota"` on this machine, as text. It prints the limits without a model turn. Empty when agy is missing, fails, or takes over 20s. */
+function agyQuotaText(): string {
+  const home = os.homedir();
+  const candidates = [path.join(home, ".local", "bin", "agy"), process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "agy", "bin", "agy.exe") : ""];
+  const bin = candidates.find((file) => file !== "" && existsSync(file)) ?? "agy";
+  const run = spawnSync(bin, ["-p", "/quota"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 20_000, windowsHide: true });
+  if (run.error !== undefined || run.status !== 0) return "";
+  return String(run.stdout ?? "");
+}
+
 /** Display names from the live model list. Best effort: a failed call leaves the names humanized. */
 function gravityNames(token: string): Map<string, string> {
   const names = new Map<string, string>();
@@ -931,10 +1019,8 @@ function antigravity(device: string): TeamAccount | null {
   const names = token === null ? new Map<string, string>() : gravityNames(token);
   const summary = token === null ? null : postJson("https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary", token);
   const buckets = quota?.buckets;
-  const windows = [
-    ...gravityWindows(Array.isArray(buckets) ? buckets : [], Date.now(), names),
-    ...gravitySummaryWindows(summary),
-  ];
+  const agy = gravityAgyWindows(parseAgyQuota(agyQuotaText()));
+  const windows = joinGravityWindows(agy, gravityWindows(Array.isArray(buckets) ? buckets : [], Date.now(), names), gravitySummaryWindows(summary));
   const planName = plan?.paidTier?.name || plan?.currentTier?.name || null;
   const label = email ?? planName ?? "Gravity";
   antigravityAt = Date.now();

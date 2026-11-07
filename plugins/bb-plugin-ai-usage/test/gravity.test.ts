@@ -1,6 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { cardWindows, gravityCardWindows, limitingWindows, unknownWords } from "../src/format";
-import { gravitySummaryWindows, gravityWindows, parseAgyCredential, probeModels, probeQuota, probeSummary } from "../src/local-providers";
+import { cardWindows, limitingWindows } from "../src/format";
+import {
+  gravityAgyWindows,
+  gravitySummaryWindows,
+  gravityWindows,
+  joinGravityWindows,
+  parseAgyCredential,
+  parseAgyQuota,
+  probeModels,
+  probeQuota,
+  probeSummary,
+} from "../src/local-providers";
 import type { TeamAccount } from "../src/report";
 
 const now = Date.parse("2026-11-05T12:00:00Z");
@@ -415,23 +425,11 @@ describe("Gravity Argon row and the card", () => {
     expect(names).toHaveLength(2);
   });
 
-  test("with no Argon reading the card shows a placeholder first, unread, not main, and no percentage", () => {
+  test("with no Argon reading the card has no placeholder row: it shows the readings it has", () => {
     const account = accountOf(gravityWindows([{ modelId: "claude-opus-5-5", remainingFraction: 0.5, resetTime: reset }], now));
-    const rows = cardWindows("antigravity", account);
-    expect(rows.map((w) => [w.name, w.main, w.unread, w.state])).toEqual([
-      ["Gemini 4 Argon", false, true, "unknown"],
-      ["Claude Opus 5.5", true, false, "ok"],
-    ]);
-    expect(unknownWords("antigravity", rows[0]!)).toBe("quota not reported by Google");
-    expect(unknownWords("antigravity", rows[1]!)).toBeNull();
-    expect(unknownWords("claude", rows[0]!)).toBeNull();
+    expect(cardWindows("antigravity", account).map((w) => [w.name, w.main, w.unread])).toEqual([["Claude Opus 5.5", true, false]]);
     expect(limitingWindows(account).map((w) => w.name)).toEqual(["Claude Opus 5.5"]);
-  });
-
-  test("no placeholder when Argon is reported or there are no readings", () => {
-    const withArgon = accountOf(gravityWindows([{ modelId: "gemini-4-argon", remainingFraction: 0.5, resetTime: reset }], now));
-    expect(gravityCardWindows(withArgon).map((w) => w.name)).toEqual(["Gemini 4 Argon"]);
-    expect(gravityCardWindows(accountOf([]))).toEqual([]);
+    expect(cardWindows("antigravity", accountOf([]))).toEqual([]);
   });
 
   test("the summary's shared limits become Claude & GPT rows; missing or junk values add nothing", () => {
@@ -463,6 +461,101 @@ describe("Gravity Argon row and the card", () => {
     expect(text).not.toContain("secret-value");
     expect(text).toContain("Claude and GPT models");
     expect(text).toContain("3p-5h");
+  });
+});
+
+describe("agy /quota rows", () => {
+  // The exact output of `agy -p "/quota"` (agy 1.5.3), tab-separated.
+  const sample = [
+    "Gemini Models\tWeekly Limit Remaining\t100%\t2026-11-14T21:50:50Z",
+    "Gemini Models\tFive Hour Limit Remaining\t100%\t2026-11-08T02:50:50Z",
+    "Claude and GPT models\tWeekly Limit Remaining\t100%\t2026-11-14T21:50:50Z",
+    "Claude and GPT models\tFive Hour Limit Remaining\t100%\t2026-11-08T02:50:50Z",
+    "Gemini 4 Argon\tGemini 4 Argon Weekly Limit\t49%\t2026-11-14T18:36:11Z",
+  ].join("\n");
+
+  test("the sample parses into one row per line, percent left and reset kept as printed", () => {
+    expect(parseAgyQuota(sample)).toEqual([
+      { category: "Gemini Models", label: "Weekly Limit Remaining", remaining: 100, resetsAt: "2026-11-14T21:50:50Z" },
+      { category: "Gemini Models", label: "Five Hour Limit Remaining", remaining: 100, resetsAt: "2026-11-08T02:50:50Z" },
+      { category: "Claude and GPT models", label: "Weekly Limit Remaining", remaining: 100, resetsAt: "2026-11-14T21:50:50Z" },
+      { category: "Claude and GPT models", label: "Five Hour Limit Remaining", remaining: 100, resetsAt: "2026-11-08T02:50:50Z" },
+      { category: "Gemini 4 Argon", label: "Gemini 4 Argon Weekly Limit", remaining: 49, resetsAt: "2026-11-14T18:36:11Z" },
+    ]);
+  });
+
+  test("garbage, partial and unreadable lines are skipped or keep only what they state", () => {
+    const text = [
+      "",
+      "agy: some banner",
+      "Gemini Models",
+      "Gemini Models\tWeekly Limit Remaining",
+      "Gemini Models\tWeekly Limit Remaining\t",
+      "Gemini Models\tWeekly Limit Remaining\tabc%\t2026-11-14T21:50:50Z",
+      "Gemini Models\tWeekly Limit Remaining\t150%\t2026-11-14T21:50:50Z",
+      "\tWeekly Limit Remaining\t40%\t2026-11-14T21:50:50Z",
+      "Gemini 4 Argon\t\t30%",
+      "Gemini 4 Argon\tGemini 4 Argon Weekly Limit\t30%\tnot-a-time",
+      "Claude and GPT models\tFive Hour Limit Remaining\t 80% \t2026-11-08T02:50:50Z\r",
+    ].join("\n");
+    expect(parseAgyQuota(text)).toEqual([
+      { category: "Gemini 4 Argon", label: "Gemini 4 Argon Weekly Limit", remaining: 30, resetsAt: null },
+      { category: "Claude and GPT models", label: "Five Hour Limit Remaining", remaining: 80, resetsAt: "2026-11-08T02:50:50Z" },
+    ]);
+    expect(parseAgyQuota("")).toEqual([]);
+  });
+
+  test("the windows put Argon first and main, then each category's 5-hour limit before its weekly one", () => {
+    const windows = gravityAgyWindows(parseAgyQuota(sample));
+    expect(windows.map((w) => [w.name, w.percent, w.resets_at, w.main])).toEqual([
+      ["Gemini 4 Argon · weekly", 51, "2026-11-14T18:36:11Z", true],
+      ["Gemini · 5-hour", 0, "2026-11-08T02:50:50Z", false],
+      ["Gemini · weekly", 0, "2026-11-14T21:50:50Z", false],
+      ["Claude & GPT · 5-hour", 0, "2026-11-08T02:50:50Z", false],
+      ["Claude & GPT · weekly", 0, "2026-11-14T21:50:50Z", false],
+    ]);
+  });
+
+  test("a new limit row becomes a window by itself, and a repeated name is dropped", () => {
+    const text = `${sample}\nGemini 5 Flash\tGemini 5 Flash Five Hour Limit Remaining\t80%\t2026-11-08T02:50:50Z\nGemini 5 Flash\tGemini 5 Flash Five Hour Limit Remaining\t10%\t2026-11-08T02:50:50Z`;
+    const names = gravityAgyWindows(parseAgyQuota(text)).map((w) => [w.name, w.percent]);
+    expect(names).toEqual([
+      ["Gemini 4 Argon · weekly", 51],
+      ["Gemini · 5-hour", 0],
+      ["Gemini · weekly", 0],
+      ["Claude & GPT · 5-hour", 0],
+      ["Claude & GPT · weekly", 0],
+      ["Gemini 5 Flash · 5-hour", 20],
+    ]);
+  });
+
+  test("with no agy rows the card keeps retrieveUserQuota's Argon row as main", () => {
+    const models = gravityWindows([{ modelId: "gemini-4-argon", remainingFraction: 0.5, resetTime: reset }], now);
+    const joined = joinGravityWindows([], models, []);
+    expect(joined.map((w) => [w.name, w.main])).toEqual([["Gemini 4 Argon", true]]);
+  });
+
+  test("agy's rows win: one Argon row, no duplicate Claude & GPT rows, and the model rows follow", () => {
+    const agy = gravityAgyWindows(parseAgyQuota(sample));
+    const models = gravityWindows(
+      [
+        { modelId: "gemini-4-argon", remainingFraction: 0.9, resetTime: reset },
+        { modelId: "claude-opus-5-5", remainingFraction: 0.5, resetTime: reset },
+      ],
+      now,
+    );
+    const shared = gravitySummaryWindows({
+      groups: [{ buckets: [{ bucketId: "3p-weekly", resetTime: reset, remainingFraction: 1 }, { bucketId: "3p-5h", resetTime: reset, remainingFraction: 0.5 }] }],
+    }, now);
+    const joined = joinGravityWindows(agy, models, shared);
+    expect(joined.map((w) => [w.name, w.percent, w.main])).toEqual([
+      ["Gemini 4 Argon · weekly", 51, true],
+      ["Gemini · 5-hour", 0, false],
+      ["Gemini · weekly", 0, false],
+      ["Claude & GPT · 5-hour", 0, false],
+      ["Claude & GPT · weekly", 0, false],
+      ["Claude Opus 5.5", 50, false],
+    ]);
   });
 });
 

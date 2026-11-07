@@ -10,7 +10,6 @@ import {
   attentionTone,
   attentionWords,
   cardWindows,
-  unknownWords,
   clock,
   deviceName,
   duration,
@@ -109,11 +108,7 @@ function Subscriptions({ report, now, timeZone }: ReportProps) {
                       <div className="flex items-baseline justify-between gap-2 text-xs">
                         <span className="text-muted-foreground">{g.provider === "claude" ? windowLabel(w) : shortName(a, w.name)}</span>
                         <span>
-                          {unknownWords(g.provider, w) ?? (
-                            <>
-                              <span className="font-medium">{left(w)}</span> left
-                            </>
-                          )}
+                          <span className="font-medium">{left(w)}</span> left
                           {w.resets_at !== null ? (
                             <span className="text-muted-foreground"> · resets {clock(w.resets_at, now, timeZone)}</span>
                           ) : null}
