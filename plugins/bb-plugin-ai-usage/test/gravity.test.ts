@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { limitingWindows } from "../src/format";
-import { gravityWindows } from "../src/local-providers";
+import { gravityWindows, probeModels, probeQuota } from "../src/local-providers";
 import type { TeamAccount } from "../src/report";
 
 const now = Date.parse("2026-11-05T12:00:00Z");
@@ -27,11 +27,19 @@ describe("gravityWindows", () => {
     expect(windows).toMatchObject([{ name: "Claude Opus 5.5", percent: 100, state: "out", resets_at: null }]);
   });
 
-  test("a reset time that has passed, or an exhausted mark, is 100% used", () => {
-    const past = gravityWindows([{ modelId: "gemini-2.5-pro", remainingFraction: 1, resetTime: "2026-11-01T00:00:00Z" }], now);
-    const marked = gravityWindows([{ modelId: "gemini-2.5-pro", remainingFraction: 1, resetTime: reset, exhausted: true }], now);
-    expect(past[0]?.percent).toBe(100);
-    expect(marked[0]?.percent).toBe(100);
+  test("an Argon bucket whose reset time has passed is 100% used, even with a fraction", () => {
+    const windows = gravityWindows([{ modelId: "gemini-4-argon", remainingFraction: 1, resetTime: "2026-11-01T00:00:00Z" }], now);
+    expect(windows).toMatchObject([{ name: "Gemini 4 Argon", percent: 100, state: "out" }]);
+  });
+
+  test("a non-Argon bucket whose reset time has passed uses its reported fraction", () => {
+    const windows = gravityWindows([{ modelId: "gemini-2.5-pro", remainingFraction: 0.5, resetTime: "2026-11-01T00:00:00Z" }], now);
+    expect(windows).toMatchObject([{ name: "Gemini 2.5 Pro", percent: 50, state: "ok" }]);
+  });
+
+  test("an exhausted mark is 100% used for any model", () => {
+    const windows = gravityWindows([{ modelId: "gemini-2.5-pro", remainingFraction: 1, resetTime: reset, exhausted: true }], now);
+    expect(windows[0]?.percent).toBe(100);
   });
 
   test("a bucket with neither remainingFraction nor resetTime is skipped", () => {
@@ -186,5 +194,87 @@ describe("gravityWindows", () => {
     );
     const account = { quota: { windows } } as unknown as TeamAccount;
     expect(limitingWindows(account).map((w) => w.name)).toEqual(["Claude Opus 5.5", "Gemini 3.8 Flash", "GPT-OSS 120B"]);
+  });
+});
+
+describe("gravity probes", () => {
+  const secrets = ["sk-live-123", "hunter2", "ya29.made-up", "me@example.com", "hello world", "leaked-deep", "tok-789"];
+
+  test("the quota probe keeps only allowlisted fields and redacts secrets, unknown strings and odd names", () => {
+    const raw = {
+      apiKey: "sk-live-123",
+      password: "hunter2",
+      accessToken: "ya29.made-up",
+      buckets: [
+        {
+          modelId: "claude-opus-5-5",
+          remainingFraction: 0.4,
+          resetTime: "2026-11-08T00:00:00Z",
+          exhausted: true,
+          secretFlag: true,
+          email: "me@example.com",
+          note: "hello world",
+          nested: { deep: "leaked-deep" },
+          "odd name@x": "tok-789",
+        },
+        { modelId: "me@example.com", remainingFraction: "0.2" },
+      ],
+    };
+    const text = JSON.stringify(probeQuota(raw));
+    for (const secret of secrets) expect(text).not.toContain(secret);
+    expect(probeQuota(raw)).toMatchObject({
+      fields: ["apiKey", "password", "accessToken", "buckets"],
+      buckets: [
+        {
+          modelId: "claude-opus-5-5",
+          remainingFraction: 0.4,
+          resetTime: "2026-11-08T00:00:00Z",
+          exhausted: true,
+          secretFlag: "[redacted]",
+          email: "[redacted]",
+          note: "[redacted]",
+          nested: "[redacted]",
+          "[name]": "[redacted]",
+        },
+        { modelId: "[redacted]", remainingFraction: "[redacted]" },
+      ],
+    });
+  });
+
+  test("the model probe keeps display names, ids and quota fields, and redacts everything else", () => {
+    const raw = {
+      token: "tok-789",
+      models: {
+        "gemini-4-argon": {
+          displayName: "Gemini 4 Argon",
+          quotaInfo: { remainingFraction: 0, resetTime: "2026-11-08T00:00:00Z", apiKey: "sk-live-123" },
+          secret: "hunter2",
+        },
+        "bad id me@example.com": { displayName: "me@example.com", quotaInfo: { resetTime: "hello world" } },
+      },
+    };
+    const text = JSON.stringify(probeModels(raw));
+    for (const secret of secrets) expect(text).not.toContain(secret);
+    expect(probeModels(raw)).toEqual({
+      fields: ["token", "models"],
+      models: [
+        {
+          id: "gemini-4-argon",
+          displayName: "Gemini 4 Argon",
+          fields: ["displayName", "quotaInfo", "secret"],
+          quotaFields: ["remainingFraction", "resetTime", "apiKey"],
+          remainingFraction: 0,
+          resetTime: "2026-11-08T00:00:00Z",
+        },
+        {
+          id: "[redacted]",
+          displayName: "[redacted]",
+          fields: ["displayName", "quotaInfo"],
+          quotaFields: ["resetTime"],
+          remainingFraction: null,
+          resetTime: "[redacted]",
+        },
+      ],
+    });
   });
 });

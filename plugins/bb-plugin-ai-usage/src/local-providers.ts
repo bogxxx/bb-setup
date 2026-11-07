@@ -517,14 +517,15 @@ function resetPast(resetTime: string | undefined, now: number): boolean {
 }
 
 /**
- * Used up when the payload says so: remainingFraction 0, a reset time that has passed, an exhausted
- * mark, or a reset time with no remainingFraction at all (Google's proto3 JSON omits zero values).
+ * Used up when the payload says so: remainingFraction 0, an exhausted mark, or a reset time with no
+ * remainingFraction at all (Google's proto3 JSON omits zero values). Argon also counts as used up
+ * once its reset time has passed; other models use their reported fraction.
  */
-function exhausted(bucket: GravityBucket, now: number): boolean {
+function exhausted(bucket: GravityBucket, now: number, argon: boolean): boolean {
   return (
     bucket.remainingFraction === 0 ||
     (typeof bucket.remainingFraction !== "number" && !!bucket.resetTime) ||
-    resetPast(bucket.resetTime, now) ||
+    (argon && resetPast(bucket.resetTime, now)) ||
     markedExhausted(bucket)
   );
 }
@@ -567,7 +568,7 @@ export function gravityWindows(buckets: readonly GravityBucket[], now = Date.now
   for (const bucket of buckets) {
     const id = bucket.modelId ?? "";
     if (!kept(id)) continue;
-    const used = exhausted(bucket, now) ? 100 : usedPercent(bucket.remainingFraction);
+    const used = exhausted(bucket, now, isArgon(id)) ? 100 : usedPercent(bucket.remainingFraction);
     if (used === null) continue;
     const key = id.replace(EFFORT_SUFFIX, "");
     const reset = bucket.resetTime || null;
@@ -622,52 +623,98 @@ function gravityNames(token: string): Map<string, string> {
   return names;
 }
 
-/** A value with secrets, account names and long text removed, so a probe can be shared. */
-function safeValue(value: unknown, depth = 0): unknown {
-  if (value === null || typeof value === "boolean" || typeof value === "number") return value;
-  if (typeof value === "string") {
-    if (value.length > 80 || value.includes("@") || /\s/.test(value)) return `[string ${value.length}]`;
-    return value;
-  }
-  if (depth >= 3 || typeof value !== "object") return `[${typeof value}]`;
-  if (Array.isArray(value)) return value.slice(0, 8).map((item) => safeValue(item, depth + 1));
+const PROBE_ID = /^[A-Za-z0-9._-]{1,80}$/;
+const PROBE_NAME = /^[A-Za-z0-9 ._()-]{1,80}$/;
+const PROBE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})?$/;
+const PROBE_FLAG = /exhaust|expired|depleted/i;
+const REDACTED = "[redacted]";
+
+function plainObject(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+/** A field name as a probe shows it. Only plain identifiers pass, so a value cannot hide in a name. */
+function fieldName(key: string): string {
+  return /^[A-Za-z_][A-Za-z0-9_]{0,40}$/.test(key) ? key : "[name]";
+}
+
+/** The value when it matches the pattern, else redacted. Absent stays null. */
+function probeText(value: unknown, pattern: RegExp): string | null {
+  if (value === undefined) return null;
+  return typeof value === "string" && pattern.test(value) ? value : REDACTED;
+}
+
+function probeFraction(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * The diagnostic fields of one quota bucket: model id, fraction, reset time, and boolean flags
+ * that say exhausted. Every other field is listed by name only, with its value redacted.
+ */
+function probeBucket(value: unknown): Record<string, unknown> {
+  const item = plainObject(value);
+  if (item === null) return { value: REDACTED };
   const out: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value)) {
-    if (/token|secret|auth|email|credential/i.test(key)) continue;
-    out[key] = safeValue(item, depth + 1);
+  for (const [key, field] of Object.entries(item)) {
+    if (key === "modelId") out[key] = probeText(field, PROBE_ID);
+    else if (key === "resetTime") out[key] = probeText(field, PROBE_TIME);
+    else if (key === "remainingFraction" && probeFraction(field) !== null) out[key] = field;
+    else if (typeof field === "boolean" && PROBE_FLAG.test(key)) out[key] = field;
+    else out[fieldName(key)] = REDACTED;
   }
   return out;
 }
 
-/** Shape of the live model list, with secrets removed. */
+/** The shape of a retrieveUserQuota reply, with every value outside the allowlist redacted. */
+export function probeQuota(raw: unknown): unknown {
+  const root = plainObject(raw);
+  if (root === null) return REDACTED;
+  return {
+    fields: Object.keys(root).map(fieldName),
+    buckets: Array.isArray(root.buckets) ? root.buckets.map(probeBucket) : root.buckets === undefined ? null : REDACTED,
+  };
+}
+
+/** The shape of a fetchAvailableModels reply: display names, model ids and quota fields only. */
+export function probeModels(raw: unknown): unknown {
+  const root = plainObject(raw);
+  if (root === null) return { models: REDACTED };
+  const fields = Object.keys(root).map(fieldName);
+  const table = plainObject(root.models);
+  if (table === null) return { fields };
+  return {
+    fields,
+    models: Object.entries(table).map(([id, value]) => {
+      const item = plainObject(value) ?? {};
+      const quota = plainObject(item.quotaInfo) ?? {};
+      return {
+        id: probeText(id, PROBE_ID),
+        displayName: probeText(item.displayName, PROBE_NAME),
+        fields: Object.keys(item).map(fieldName),
+        quotaFields: Object.keys(quota).map(fieldName),
+        remainingFraction: probeFraction(quota.remainingFraction),
+        resetTime: probeText(quota.resetTime, PROBE_TIME),
+      };
+    }),
+  };
+}
+
+/** The live model list, with every value outside the allowlist redacted. */
 export function gravityBucketProbe(): unknown {
   const token = antigravityRefresh();
   if (token === null) return null;
   const models = postJson("https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels", token);
   if (models === null || typeof models !== "object") return { models: null };
-  const root = models as Record<string, unknown>;
-  const table = root.models;
-  if (table === null || typeof table !== "object" || Array.isArray(table)) return { top: Object.keys(root), models: safeValue(models) };
-  const rows = Object.entries(table as Record<string, unknown>).map(([id, value]) => {
-    const item = value !== null && typeof value === "object" ? (value as Record<string, unknown>) : {};
-    const quota = item.quotaInfo !== null && typeof item.quotaInfo === "object" ? (item.quotaInfo as Record<string, unknown>) : {};
-    return {
-      id,
-      keys: Object.keys(item).sort(),
-      remainingFraction: typeof quota.remainingFraction === "number" ? quota.remainingFraction : null,
-      resetTime: typeof quota.resetTime === "string" ? quota.resetTime : null,
-      quotaKeys: Object.keys(quota).sort(),
-    };
-  });
-  return { top: Object.keys(root), rows };
+  return probeModels(models);
 }
 
-/** The raw quota buckets from retrieveUserQuota, with secrets removed. */
+/** The raw quota buckets from retrieveUserQuota, with every value outside the allowlist redacted. */
 export function gravityQuotaProbe(): unknown {
   const token = antigravityRefresh();
   if (token === null) return null;
   const quota = postJson("https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota", token);
-  return quota === null ? null : safeValue(quota);
+  return quota === null ? null : probeQuota(quota);
 }
 
 const ANTIGRAVITY_SIGNED_OUT = "Antigravity is installed, but its sign-in could not be read.";
