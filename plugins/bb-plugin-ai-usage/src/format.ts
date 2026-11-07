@@ -161,6 +161,35 @@ export function limitingWindows(a: TeamAccount): Window[] {
   return [first, ...others];
 }
 
+/**
+ * Gravity's card: its rows in report order, Argon first. Google does not always report an Argon quota,
+ * so the card shows an Argon row with no reading when none is in the report. The row is added here, not
+ * sent as data, so the wire format is unchanged. A card with no readings gets no placeholder.
+ */
+export function gravityCardWindows(a: TeamAccount): Window[] {
+  const windows = a.quota?.windows ?? [];
+  if (windows.length === 0 || windows.some((w) => /argon/i.test(w.name))) return windows;
+  const placeholder: Window = {
+    name: "Gemini 4 Argon",
+    percent: 0,
+    resets_at: null,
+    minutes: null,
+    main: false,
+    limits: false,
+    stale: false,
+    reset: false,
+    unread: true,
+    state: "unknown",
+    forecast: null,
+  };
+  return [placeholder, ...windows];
+}
+
+/** The words for a window with no reading: Gravity's Argon row says the quota is not reported, others show "?". */
+export function unknownWords(providerId: string, w: Window): string | null {
+  return providerId === "antigravity" && w.unread === true ? "quota not reported by Google" : null;
+}
+
 /** A Claude family window: "7d Fable", "7d Opus". */
 function isFamily(w: Window): boolean {
   return /^7d .+/.test(w.name);
@@ -173,6 +202,7 @@ function isFamily(w: Window): boolean {
  * them, as `limitingWindows` has it.
  */
 export function cardWindows(providerId: string, a: TeamAccount): Window[] {
+  if (providerId === "antigravity") return gravityCardWindows(a);
   if (providerId !== "claude") return limitingWindows(a);
   const windows = a.quota?.windows ?? [];
   const byLength = (x: Window, y: Window) => (x.minutes ?? Infinity) - (y.minutes ?? Infinity);

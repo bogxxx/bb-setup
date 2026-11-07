@@ -1,6 +1,6 @@
 {
   "name": "@goodit/bb-plugin-ai-usage",
-  "version": "0.14.5",
+  "version": "0.14.6",
   "description": "Your team's Claude Code, Codex and Grok subscriptions in BB: what is left of each limit, who used it, and what it costs, from ai-usage.",
   "license": "MIT",
   "type": "module",

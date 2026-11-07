@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { limitingWindows } from "../src/format";
-import { gravityWindows, probeModels, probeQuota } from "../src/local-providers";
+import { cardWindows, gravityCardWindows, limitingWindows, unknownWords } from "../src/format";
+import { gravitySummaryWindows, gravityWindows, parseAgyCredential, probeModels, probeQuota, probeSummary } from "../src/local-providers";
 import type { TeamAccount } from "../src/report";
 
 const now = Date.parse("2026-11-05T12:00:00Z");
@@ -249,13 +249,13 @@ describe("frontier models, with the buckets a real account returns", () => {
   ].map((modelId) => ({ modelId, remainingFraction: 0.5, resetTime: reset }));
 
   test("the card shows the newest Gemini flash, Opus and GPT, and nothing else that is not used up", () => {
-    expect(gravityWindows(real, now).map((w) => w.name)).toEqual(["Gemini 3.8 Flash Tiered", "Claude Opus 5.5", "GPT-OSS 120B"]);
+    expect(gravityWindows(real, now).map((w) => w.name)).toEqual(["Gemini 3.8 Flash", "Claude Opus 5.5", "GPT-OSS 120B"]);
   });
 
   test("a used-up model that is not frontier is shown after the frontier rows", () => {
     const windows = gravityWindows([...real, { modelId: "gemini-2.5-pro", remainingFraction: 0, resetTime: reset }], now);
     expect(windows.map((w) => [w.name, w.main])).toEqual([
-      ["Gemini 3.8 Flash Tiered", true],
+      ["Gemini 3.8 Flash", true],
       ["Claude Opus 5.5", false],
       ["GPT-OSS 120B", false],
       ["Gemini 2.5 Pro", false],
@@ -385,3 +385,114 @@ describe("gravity probes", () => {
     });
   });
 });
+
+describe("Gravity Argon row and the card", () => {
+  const accountOf = (windows: ReturnType<typeof gravityWindows>) => ({ quota: { windows } }) as unknown as TeamAccount;
+
+  test("a real Argon row is first and main, even when another row is more used", () => {
+    const windows = gravityWindows(
+      [
+        { modelId: "claude-opus-5-5", remainingFraction: 0.1, resetTime: reset },
+        { modelId: "gemini-4-argon", remainingFraction: 0.9, resetTime: reset },
+      ],
+      now,
+    );
+    expect(windows.map((w) => [w.name, w.main])).toEqual([
+      ["Gemini 4 Argon", true],
+      ["Claude Opus 5.5", false],
+    ]);
+  });
+
+  test("a flash model and its -tiered twin keep unique names", () => {
+    const names = gravityWindows(
+      [
+        { modelId: "gemini-3.8-flash", remainingFraction: 0.5, resetTime: reset },
+        { modelId: "gemini-3.8-flash-tiered", remainingFraction: 0.5, resetTime: reset },
+      ],
+      now,
+    ).map((w) => w.name);
+    expect(new Set(names).size).toBe(names.length);
+    expect(names).toHaveLength(2);
+  });
+
+  test("with no Argon reading the card shows a placeholder first, unread, not main, and no percentage", () => {
+    const account = accountOf(gravityWindows([{ modelId: "claude-opus-5-5", remainingFraction: 0.5, resetTime: reset }], now));
+    const rows = cardWindows("antigravity", account);
+    expect(rows.map((w) => [w.name, w.main, w.unread, w.state])).toEqual([
+      ["Gemini 4 Argon", false, true, "unknown"],
+      ["Claude Opus 5.5", true, false, "ok"],
+    ]);
+    expect(unknownWords("antigravity", rows[0]!)).toBe("quota not reported by Google");
+    expect(unknownWords("antigravity", rows[1]!)).toBeNull();
+    expect(unknownWords("claude", rows[0]!)).toBeNull();
+    expect(limitingWindows(account).map((w) => w.name)).toEqual(["Claude Opus 5.5"]);
+  });
+
+  test("no placeholder when Argon is reported or there are no readings", () => {
+    const withArgon = accountOf(gravityWindows([{ modelId: "gemini-4-argon", remainingFraction: 0.5, resetTime: reset }], now));
+    expect(gravityCardWindows(withArgon).map((w) => w.name)).toEqual(["Gemini 4 Argon"]);
+    expect(gravityCardWindows(accountOf([]))).toEqual([]);
+  });
+
+  test("the summary's shared limits become Claude & GPT rows; missing or junk values add nothing", () => {
+    const raw = {
+      groups: [
+        {
+          displayName: "Claude and GPT models",
+          buckets: [
+            { bucketId: "3p-weekly", window: "weekly", resetTime: "2026-11-14T21:30:37Z", remainingFraction: 0.75 },
+            { bucketId: "3p-5h", window: "5h", resetTime: "2026-11-08T02:30:37Z", remainingFraction: 0 },
+          ],
+        },
+      ],
+    };
+    expect(gravitySummaryWindows(raw, now).map((w) => [w.name, w.percent, w.resets_at, w.main])).toEqual([
+      ["Claude & GPT · weekly", 25, "2026-11-14T21:30:37Z", false],
+      ["Claude & GPT · 5-hour", 100, "2026-11-08T02:30:37Z", false],
+    ]);
+    expect(gravitySummaryWindows(null, now)).toEqual([]);
+    expect(gravitySummaryWindows({ groups: "nope" }, now)).toEqual([]);
+    expect(gravitySummaryWindows({ groups: [{ buckets: [{ bucketId: "3p-5h", remainingFraction: "0.5" }] }] }, now)).toEqual([]);
+    const reset = gravitySummaryWindows({ groups: [{ buckets: [{ bucketId: "3p-5h", resetTime: "2026-11-08T02:30:37Z" }] }] }, now);
+    expect(reset.map((w) => w.percent)).toEqual([100]);
+  });
+
+  test("the summary probe keeps names, reset times and fractions, and redacts other text", () => {
+    const text = JSON.stringify(probeSummary({ groups: [{ displayName: "Claude and GPT models", description: "hunter2", buckets: [{ bucketId: "3p-5h", remainingFraction: 1, resetTime: "2026-11-08T02:30:37Z", token: "secret-value" }] }] }));
+    expect(text).not.toContain("hunter2");
+    expect(text).not.toContain("secret-value");
+    expect(text).toContain("Claude and GPT models");
+    expect(text).toContain("3p-5h");
+  });
+});
+
+describe("parseAgyCredential", () => {
+  const now = Date.parse("2026-11-07T12:00:00Z");
+  const credential = (expiry: string) => ({
+    token: { access_token: "ya29.access", refresh_token: "1//refresh", expiry, token_type: "Bearer" },
+    auth_method: "oauth",
+    id_token_email: "someone@example.com",
+  });
+
+  test("reads plain JSON, the go-keyring base64 form and hex, the same way", () => {
+    const json = JSON.stringify(credential("2026-11-08T12:00:00Z"));
+    const plain = parseAgyCredential(json, now);
+    expect(plain).toEqual({ email: "someone", access: "ya29.access", refresh: "1//refresh" });
+    expect(parseAgyCredential(`go-keyring-base64:${Buffer.from(json).toString("base64")}`, now)).toEqual(plain);
+    expect(parseAgyCredential(Buffer.from(json).toString("hex"), now)).toEqual(plain);
+  });
+
+  test("an expired access token is dropped, but its refresh token is kept", () => {
+    expect(parseAgyCredential(JSON.stringify(credential("2026-11-07T11:00:00Z")), now)).toEqual({
+      email: "someone",
+      access: null,
+      refresh: "1//refresh",
+    });
+  });
+
+  test("junk and an empty token give nothing", () => {
+    expect(parseAgyCredential("not json", now)).toBeNull();
+    expect(parseAgyCredential("{}", now)).toEqual({ email: null, access: null, refresh: null });
+  });
+});
+

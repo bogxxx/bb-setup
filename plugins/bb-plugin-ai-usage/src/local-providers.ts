@@ -343,7 +343,7 @@ function antigravityEmail(): string | null {
 }
 
 /** Gemini CLI stores the same Gravity sign-in in the Windows credential manager, not a file. */
-function geminiCredential(): { email: string | null; access: string | null } | null {
+function geminiCredential(): { email: string | null; access: string | null; refresh: string | null } | null {
   if (process.platform !== "win32") return null;
   const script = `
 import ctypes, ctypes.wintypes, json
@@ -376,13 +376,53 @@ print(json.dumps({"email": data.get("id_token_email"), "access": token.get("acce
     const access = typeof parsed.access === "string" && parsed.access !== "" ? parsed.access : null;
     const expiry = typeof parsed.expiry === "string" ? Date.parse(parsed.expiry) : NaN;
     const fresh = access !== null && (!Number.isFinite(expiry) || expiry > Date.now() + 30_000);
-    return { email, access: fresh ? access : null };
+    return { email, access: fresh ? access : null, refresh: null };
   } catch {
     return null;
   }
 }
 
+/**
+ * The Gravity sign-in as the macOS keychain stores it (service `gemini`, account `antigravity`).
+ * `security -w` prints it as JSON, or as `go-keyring-base64:` plus base64 JSON, or as hex JSON.
+ * The token is returned only to the caller; it is never printed.
+ */
+export function parseAgyCredential(text: string, now = Date.now()): { email: string | null; access: string | null; refresh: string | null } | null {
+  let body = text.trim();
+  if (body.startsWith("go-keyring-base64:")) body = Buffer.from(body.slice("go-keyring-base64:".length), "base64").toString("utf8");
+  else if (/^(?:[0-9a-fA-F]{2})+$/.test(body)) body = Buffer.from(body, "hex").toString("utf8");
+  let data: { token?: { access_token?: unknown; refresh_token?: unknown; expiry?: unknown }; id_token_email?: unknown };
+  try {
+    data = JSON.parse(body) as typeof data;
+  } catch {
+    return null;
+  }
+  const token = plainObject(data.token) ?? {};
+  const access = typeof token.access_token === "string" && token.access_token !== "" ? token.access_token : null;
+  const refresh = typeof token.refresh_token === "string" && token.refresh_token !== "" ? token.refresh_token : null;
+  const expiry = typeof token.expiry === "string" ? Date.parse(token.expiry) : NaN;
+  const fresh = access !== null && (!Number.isFinite(expiry) || expiry > now + 30_000);
+  const email = typeof data.id_token_email === "string" ? emailLocal(data.id_token_email) : null;
+  return { email, access: fresh ? access : null, refresh };
+}
+
+/** macOS: the keychain item the Gemini CLI and Antigravity write. A locked or denied item reads as null. */
+function keychainCredential(): { email: string | null; access: string | null; refresh: string | null } | null {
+  if (process.platform !== "darwin") return null;
+  const limit = stepLimit(5_000);
+  if (limit === null) return null;
+  const run = spawnSync("security", ["find-generic-password", "-s", "gemini", "-a", "antigravity", "-w"], {
+    encoding: "utf8",
+    timeout: limit,
+    windowsHide: true,
+  });
+  if (run.status !== 0 || !run.stdout.trim()) return null;
+  return parseAgyCredential(run.stdout);
+}
+
 let antigravityMail: string | null = null;
+/** Why the last refresh gave no token, shown on the probe and the card's no-reading line. */
+let antigravityWhy: string | null = null;
 
 // The Google OAuth client for Antigravity's token refresh is not stored in git. It comes from
 // env AI_USAGE_ANTIGRAVITY_CLIENT_ID / AI_USAGE_ANTIGRAVITY_CLIENT_SECRET, or from an untracked
@@ -408,34 +448,13 @@ function antigravityOauthClient(): { clientId: string; clientSecret: string } | 
   }
 }
 
-function antigravityRefresh(): string | null {
-  antigravityMail = antigravityEmail();
-  const file = antigravityStateFile();
-  const db = file === null ? null : openDb(file);
-  let stored = "";
-  if (db !== null) {
-    try {
-      stored = String(db.get("SELECT value FROM ItemTable WHERE key = 'antigravityUnifiedStateSync.oauthToken'")?.value ?? "");
-    } finally {
-      db.close();
-    }
-  }
-  if (stored === "") {
-    const cred = geminiCredential();
-    if (cred === null) return null;
-    if (antigravityMail === null) antigravityMail = cred.email;
-    return cred.access;
-  }
-  const outer = fields(Buffer.from(stored, "base64"));
-  const wrapper = outer.find((f) => f.field === 1)?.bytes;
-  if (wrapper === undefined) return null;
-  const payload = fields(wrapper).find((f) => f.field === 2)?.bytes;
-  if (payload === undefined) return null;
-  const encoded = fields(payload).find((f) => f.field === 1)?.bytes?.toString("utf8") ?? "";
-  const refresh = fields(Buffer.from(encoded, "base64")).find((f) => f.field === 3)?.bytes?.toString("utf8") ?? "";
-  if (refresh === "") return null;
+/** Trades a refresh token for an access token. Google's error code, never the body, is kept as the reason. */
+function refreshAccess(refresh: string): string | null {
   const oauth = antigravityOauthClient();
-  if (oauth === null) return null;
+  if (oauth === null) {
+    antigravityWhy = "Antigravity token expired and no OAuth client is configured";
+    return null;
+  }
   const body = new URLSearchParams({
     client_id: oauth.clientId,
     client_secret: oauth.clientSecret,
@@ -451,11 +470,43 @@ function antigravityRefresh(): string | null {
   });
   if (res.status !== 0 || !res.stdout.trim()) return null;
   try {
-    const parsed = JSON.parse(res.stdout) as { access_token?: string };
+    const parsed = JSON.parse(res.stdout) as { access_token?: string; error?: unknown };
+    if (typeof parsed.error === "string") antigravityWhy = `token refresh rejected (${parsed.error})`;
     return parsed.access_token ?? null;
   } catch {
     return null;
   }
+}
+
+function antigravityRefresh(): string | null {
+  antigravityMail = antigravityEmail();
+  antigravityWhy = null;
+  const file = antigravityStateFile();
+  const db = file === null ? null : openDb(file);
+  let stored = "";
+  if (db !== null) {
+    try {
+      stored = String(db.get("SELECT value FROM ItemTable WHERE key = 'antigravityUnifiedStateSync.oauthToken'")?.value ?? "");
+    } finally {
+      db.close();
+    }
+  }
+  if (stored === "") {
+    const cred = geminiCredential() ?? keychainCredential();
+    if (cred === null) return null;
+    if (antigravityMail === null) antigravityMail = cred.email;
+    if (cred.access !== null) return cred.access;
+    return cred.refresh === null ? null : refreshAccess(cred.refresh);
+  }
+  const outer = fields(Buffer.from(stored, "base64"));
+  const wrapper = outer.find((f) => f.field === 1)?.bytes;
+  if (wrapper === undefined) return null;
+  const payload = fields(wrapper).find((f) => f.field === 2)?.bytes;
+  if (payload === undefined) return null;
+  const encoded = fields(payload).find((f) => f.field === 1)?.bytes?.toString("utf8") ?? "";
+  const refresh = fields(Buffer.from(encoded, "base64")).find((f) => f.field === 3)?.bytes?.toString("utf8") ?? "";
+  if (refresh === "") return null;
+  return refreshAccess(refresh);
 }
 
 function postJson(url: string, token: string): unknown {
@@ -623,8 +674,9 @@ function frontierKeys(models: readonly Model[]): Set<string> {
 /**
  * One meter per model. Effort variants (`-low`, `-max`, ...) share a meter and show the worst of
  * them, with that bucket's reset. `names` maps a model id to its display name. Only the frontier
- * model of each family is shown, plus any other model that is used up. Most used first, the
- * frontier rows before the used-up ones; then Gemini, Claude, GPT, then the rest; the first window is main.
+ * model of each family is shown, plus any other model that is used up. A real Argon row comes first,
+ * then the frontier rows before the used-up ones, most used first; then Gemini, Claude, GPT, then the
+ * rest. The first window is main.
  */
 export function gravityWindows(buckets: readonly GravityBucket[], now = Date.now(), names: ReadonlyMap<string, string> = new Map()): Window[] {
   const groups = new Map<string, { ids: string[]; used: number; reset: string | null }>();
@@ -650,7 +702,8 @@ export function gravityWindows(buckets: readonly GravityBucket[], now = Date.now
   const entries = [...groups.entries()]
     .map(([key, group]) => {
       const named = group.ids.map((id) => names.get(id)).find((name) => name !== undefined);
-      const label = named === undefined ? humanize(key) : named.replace(EFFORT_NAME_SUFFIX, "").trim();
+      // The "-tiered" suffix is an internal tier marker, not part of the model's name.
+      const label = named === undefined ? humanize(key.replace(/-tiered$/, "")) : named.replace(EFFORT_NAME_SUFFIX, "").trim();
       const rank = FAMILY_ORDER.indexOf(family(key) ?? "");
       return { key, label, ...group, rank: rank === -1 ? FAMILY_ORDER.length : rank, frontier: frontier.has(key) };
     })
@@ -671,8 +724,40 @@ export function gravityWindows(buckets: readonly GravityBucket[], now = Date.now
   for (const entry of entries) if ((labelCount.get(entry.label) ?? 0) > 1) claim(entry.key, entry.key);
   const sorted = entries
     .map((entry) => ({ ...entry, name: claimed.get(entry.key) ?? entry.key }))
-    .sort((a, b) => Number(b.frontier) - Number(a.frontier) || b.used - a.used || a.rank - b.rank || a.name.localeCompare(b.name));
+    .sort(
+      (a, b) =>
+        Number(isArgon(b.key)) - Number(isArgon(a.key)) ||
+        Number(b.frontier) - Number(a.frontier) ||
+        b.used - a.used ||
+        a.rank - b.rank ||
+        a.name.localeCompare(b.name),
+    );
   return sorted.map((entry, i) => meter(entry.name, entry.used, entry.reset, i === 0));
+}
+
+/**
+ * The shared Claude & GPT limits from retrieveUserQuotaSummary: the 5-hour and weekly buckets of each
+ * group that has them. A bucket with no readable fraction is skipped, never shown as a made-up number.
+ */
+export function gravitySummaryWindows(raw: unknown, now = Date.now()): Window[] {
+  const groups = plainObject(raw)?.groups;
+  if (!Array.isArray(groups)) return [];
+  const names: Record<string, string> = { "3p-5h": "5-hour", "3p-weekly": "weekly" };
+  const out: Window[] = [];
+  for (const group of groups) {
+    const buckets = plainObject(group)?.buckets;
+    if (!Array.isArray(buckets)) continue;
+    for (const item of buckets) {
+      const bucket = plainObject(item) as (GravityBucket & { bucketId?: unknown }) | null;
+      const kind = typeof bucket?.bucketId === "string" ? names[bucket.bucketId] : undefined;
+      if (bucket === null || kind === undefined) continue;
+      const used = exhausted(bucket, now, false) ? 100 : usedPercent(bucket.remainingFraction);
+      if (used === null) continue;
+      const resetTime = typeof bucket.resetTime === "string" && bucket.resetTime !== "" ? bucket.resetTime : null;
+      out.push(meter(`Claude & GPT · ${kind}`, used, resetTime, false));
+    }
+  }
+  return out;
 }
 
 /** Display names from the live model list. Best effort: a failed call leaves the names humanized. */
@@ -784,6 +869,46 @@ export function gravityQuotaProbe(): unknown {
   return quota === null ? null : probeQuota(quota);
 }
 
+const SUMMARY_KEY = /^(id|name|title|displayName|modelId|bucketId|groupId|label|type|kind|period|window|scope|group|bucket)$/i;
+const SUMMARY_NUMBER_KEY = /fraction|percent|remain|used|limit|minute|second|count|usage|quota|total/i;
+
+/**
+ * The shape of a retrieveUserQuotaSummary reply: every field name, and values only where they are
+ * safe to show (ids and names under known keys, reset times, flags). Other numbers show as a
+ * placeholder unless the key names a quota figure; other strings are redacted.
+ */
+export function probeSummary(raw: unknown, key = "", depth = 0): unknown {
+  if (depth > 8) return REDACTED;
+  if (Array.isArray(raw)) return raw.slice(0, 20).map((item) => probeSummary(item, key, depth + 1));
+  const object = plainObject(raw);
+  if (object !== null) {
+    const out: Record<string, unknown> = {};
+    for (const [name, value] of Object.entries(object)) out[fieldName(name)] = probeSummary(value, name, depth + 1);
+    return out;
+  }
+  if (typeof raw === "number") return SUMMARY_NUMBER_KEY.test(key) ? raw : "[number]";
+  if (typeof raw === "boolean" || raw === null) return raw;
+  if (typeof raw === "string") {
+    if (PROBE_TIME.test(raw)) return raw;
+    if (SUMMARY_KEY.test(key)) return probeText(raw, PROBE_NAME) ?? REDACTED;
+    return REDACTED;
+  }
+  return REDACTED;
+}
+
+/** The raw retrieveUserQuotaSummary reply, reduced by probeSummary. */
+export function gravitySummaryProbe(): unknown {
+  const token = antigravityRefresh();
+  if (token === null) return null;
+  const summary = postJson("https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary", token);
+  return summary === null ? null : probeSummary(summary);
+}
+
+/** Why the last Antigravity read gave no token, for the probe; null when a token was found or none was tried. */
+export function gravityReason(): string | null {
+  return antigravityWhy;
+}
+
 const ANTIGRAVITY_SIGNED_OUT = "Antigravity is installed, but its sign-in could not be read.";
 
 function antigravity(device: string): TeamAccount | null {
@@ -804,8 +929,12 @@ function antigravity(device: string): TeamAccount | null {
     currentTier?: { name?: string };
   } | null;
   const names = token === null ? new Map<string, string>() : gravityNames(token);
+  const summary = token === null ? null : postJson("https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary", token);
   const buckets = quota?.buckets;
-  const windows = gravityWindows(Array.isArray(buckets) ? buckets : [], Date.now(), names);
+  const windows = [
+    ...gravityWindows(Array.isArray(buckets) ? buckets : [], Date.now(), names),
+    ...gravitySummaryWindows(summary),
+  ];
   const planName = plan?.paidTier?.name || plan?.currentTier?.name || null;
   const label = email ?? planName ?? "Gravity";
   antigravityAt = Date.now();
