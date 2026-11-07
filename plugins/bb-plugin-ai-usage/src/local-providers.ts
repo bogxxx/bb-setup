@@ -567,35 +567,51 @@ interface Model {
   version: number[];
 }
 
-/** The numbers in a model id, in order: "claude-opus-5-5" is [5, 5], "gemini-3.8-pro" is [3.8]. */
+/**
+ * The version of a model id as integers, in order: "claude-opus-5-5" is [5, 5], "gemini-3.10-pro" is
+ * [3, 10], so 3.10 is newer than 3.8. Parameter counts such as "120b" are not versions.
+ */
 function versionOf(id: string): number[] {
-  return (id.match(/\d+(\.\d+)?/g) ?? []).map(Number);
+  return (id.replace(/\d+b\b/gi, "").match(/\d+/g) ?? []).map(Number);
 }
 
 function compareVersions(a: number[], b: number[]): number {
   for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    const d = (a[i] ?? -1) - (b[i] ?? -1);
-    if (d !== 0) return d;
+    const x = a[i] ?? -1;
+    const y = b[i] ?? -1;
+    if (x !== y) return x > y ? 1 : -1;
   }
   return 0;
 }
 
-/** Argon is Gemini's top tier, then Pro; Flash and Lite are not frontier. Claude's frontier is Opus. Every GPT model is a candidate. */
+/**
+ * Gemini's tiers, within its newest generation: Argon, then Pro, then Flash. Lite and Image models
+ * are not frontier. Claude's frontier is Opus. Every GPT model is a candidate.
+ */
 function modelOf(key: string): Model | null {
   const fam = family(key) ?? (isArgon(key) ? "Gemini" : null);
   if (fam === null) return null;
   let tier = 1;
-  if (fam === "Gemini") tier = isArgon(key) ? 2 : /(^|-)pro(-|$)/.test(key) ? 1 : 0;
+  if (fam === "Gemini") tier = /(^|-)(lite|image)(-|$)/.test(key) ? 0 : isArgon(key) ? 3 : /(^|-)pro(-|$)/.test(key) ? 2 : 1;
   else if (fam === "Claude") tier = /(^|-)opus(-|$)/.test(key) ? 1 : 0;
-  return { key, family: fam, tier, version: versionOf(key) };
+  // An Argon id with no version number is the current one, so it is the newest generation.
+  const version = versionOf(key);
+  return { key, family: fam, tier, version: version.length === 0 && isArgon(key) ? [Infinity] : version };
 }
 
-/** Per family, the highest tier present, and within it the highest version (ties all kept). */
+/**
+ * Per family, the frontier models: for Gemini only the newest generation present, then the highest
+ * tier, then the highest version (ties all kept). An older generation is never picked over a newer one.
+ */
 function frontierKeys(models: readonly Model[]): Set<string> {
   const out = new Set<string>();
   for (const fam of new Set(models.map((m) => m.family))) {
-    const group = models.filter((m) => m.family === fam && m.tier > 0);
+    let group = models.filter((m) => m.family === fam && m.tier > 0);
     if (group.length === 0) continue;
+    if (fam === "Gemini") {
+      const newest = group.reduce((a, b) => (compareVersions(b.version, a.version) > 0 ? b : a)).version;
+      group = group.filter((m) => compareVersions(m.version, newest) === 0);
+    }
     const top = Math.max(...group.map((m) => m.tier));
     const tiered = group.filter((m) => m.tier === top);
     const best = tiered.reduce((a, b) => (compareVersions(b.version, a.version) > 0 ? b : a));

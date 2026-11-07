@@ -15,7 +15,10 @@ describe("gravityWindows", () => {
       ],
       now,
     );
-    expect(windows.map((w) => [w.name, w.percent, w.state, w.main])).toEqual([["Claude Opus 5.5", 100, "out", true]]);
+    expect(windows.map((w) => [w.name, w.percent, w.state, w.main])).toEqual([
+      ["Claude Opus 5.5", 100, "out", true],
+      ["Gemini 3.8 Flash", 50, "ok", false],
+    ]);
     expect(windows[0]?.resets_at).toBe(reset);
   });
 
@@ -23,7 +26,7 @@ describe("gravityWindows", () => {
     const buckets = [
       { modelId: "claude-opus-5-5", remainingFraction: 0.5, resetTime: reset },
       { modelId: "claude-sonnet-5-5", remainingFraction: 0.5, resetTime: reset },
-      { modelId: "gemini-3.8-flash", remainingFraction: 0.1, resetTime: reset },
+      { modelId: "gemini-3.1-flash-lite", remainingFraction: 0.1, resetTime: reset },
     ];
     expect(gravityWindows(buckets, now).map((w) => w.name)).toEqual(["Claude Opus 5.5"]);
     const exhausted = gravityWindows([...buckets, { modelId: "claude-sonnet-5-5", remainingFraction: 0, resetTime: reset }], now);
@@ -31,8 +34,8 @@ describe("gravityWindows", () => {
       ["Claude Opus 5.5", 50, true],
       ["Claude Sonnet 5.5", 100, false],
     ]);
-    const marked = gravityWindows([...buckets, { modelId: "gemini-3.8-flash", remainingFraction: 1, resetTime: reset, exhausted: true }], now);
-    expect(marked.map((w) => w.name)).toEqual(["Claude Opus 5.5", "Gemini 3.8 Flash"]);
+    const marked = gravityWindows([...buckets, { modelId: "gemini-3.1-flash-lite", remainingFraction: 1, resetTime: reset, exhausted: true }], now);
+    expect(marked.map((w) => w.name)).toEqual(["Claude Opus 5.5", "Gemini 3.1 Flash Lite"]);
   });
 
   test("the highest version of the frontier tier wins: Opus 5.5 over Opus 4, Argon 4 over Pro 3", () => {
@@ -226,7 +229,78 @@ describe("gravityWindows", () => {
       now,
     );
     const account = { quota: { windows } } as unknown as TeamAccount;
-    expect(limitingWindows(account).map((w) => w.name)).toEqual(["Claude Opus 5.5", "GPT-OSS 120B"]);
+    expect(limitingWindows(account).map((w) => w.name)).toEqual(["Claude Opus 5.5", "Gemini 3.8 Flash", "GPT-OSS 120B"]);
+  });
+});
+
+describe("frontier models, with the buckets a real account returns", () => {
+  const real = [
+    "gemini-2.5-pro",
+    "gemini-3-flash",
+    "gemini-3.1-flash-image",
+    "gemini-3.1-flash-lite",
+    "gemini-3.8-flash-tiered",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-preview",
+    "gemini-3.5-flash-lite",
+    "claude-opus-5-5",
+    "claude-sonnet-5-5",
+    "gpt-oss-120b",
+  ].map((modelId) => ({ modelId, remainingFraction: 0.5, resetTime: reset }));
+
+  test("the card shows the newest Gemini flash, Opus and GPT, and nothing else that is not used up", () => {
+    expect(gravityWindows(real, now).map((w) => w.name)).toEqual(["Gemini 3.8 Flash Tiered", "Claude Opus 5.5", "GPT-OSS 120B"]);
+  });
+
+  test("a used-up model that is not frontier is shown after the frontier rows", () => {
+    const windows = gravityWindows([...real, { modelId: "gemini-2.5-pro", remainingFraction: 0, resetTime: reset }], now);
+    expect(windows.map((w) => [w.name, w.main])).toEqual([
+      ["Gemini 3.8 Flash Tiered", true],
+      ["Claude Opus 5.5", false],
+      ["GPT-OSS 120B", false],
+      ["Gemini 2.5 Pro", false],
+    ]);
+  });
+
+  test("the newest generation wins over a higher tier of an older one", () => {
+    const names = gravityWindows(
+      [
+        { modelId: "gemini-2.5-pro", remainingFraction: 0.5, resetTime: reset },
+        { modelId: "gemini-3.8-flash", remainingFraction: 0.5, resetTime: reset },
+      ],
+      now,
+    ).map((w) => w.name);
+    expect(names).toEqual(["Gemini 3.8 Flash"]);
+  });
+
+  test("versions compare as integer segments: 3.10 is newer than 3.8, and 3-8 is 3.8", () => {
+    const newer = gravityWindows(
+      [
+        { modelId: "gemini-3.8-pro", remainingFraction: 0.5, resetTime: reset },
+        { modelId: "gemini-3.10-pro", remainingFraction: 0.5, resetTime: reset },
+      ],
+      now,
+    );
+    expect(newer.map((w) => w.name)).toEqual(["Gemini 3.10 Pro"]);
+    const same = gravityWindows(
+      [
+        { modelId: "gemini-3-8-pro", remainingFraction: 0.5, resetTime: reset },
+        { modelId: "gemini-3.8-pro", remainingFraction: 0.5, resetTime: reset },
+      ],
+      now,
+    );
+    expect(same).toHaveLength(2);
+  });
+
+  test("a parameter count is not a version: gpt-6 outranks gpt-oss-120b", () => {
+    const windows = gravityWindows(
+      [
+        { modelId: "gpt-oss-120b", remainingFraction: 0.5, resetTime: reset },
+        { modelId: "gpt-6", remainingFraction: 0.5, resetTime: reset },
+      ],
+      now,
+    );
+    expect(windows.map((w) => w.name)).toEqual(["GPT 6"]);
   });
 });
 
