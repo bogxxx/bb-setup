@@ -68,9 +68,11 @@ git -C ~/src/bb-setup remote set-url origin https://github.com/bogxxx/bb-setup
 ~/src/bb-setup/scripts/sync.sh -m "What changed"
 ```
 
-`scripts/sync.sh` is the macOS counterpart of `sync.ps1`. Its first run is the install. It pulls first, then symlinks `~/.bb/skills/provider-orchestration`, `~/.claude/agents`, `~/.bb/AGENTS.md` and `~/.claude/CLAUDE.md` into the repo. macOS can link single files, so nothing is copied. Existing files are moved to `*.bak-<timestamp>`, and a local file that is newer than the repo copy is copied into the repo first. Then it commits and pushes. Options: `-m`, `--dry-run`, `--no-push`.
+`scripts/sync.sh` is the macOS counterpart of `sync.ps1`. Its first run is the install. It pulls first, then symlinks `~/.bb/skills/provider-orchestration`, `~/.claude/agents`, `~/.bb/AGENTS.md` and `~/.claude/CLAUDE.md` into the repo. macOS can link single files, so nothing is copied. Existing files are moved to `*.bak-<timestamp>`, and a local file that is newer than the repo copy is copied into the repo first. Then it commits and pushes. Options: `-m`, `--dry-run`, `--no-push`, `--no-plugins`.
 
-Plugins and plugin settings live on the bb server. When this Mac is only an enrolled host and the server runs on Windows, the script skips exporting them, so `plugins.json` keeps the Windows host's view. `--plugins` forces the export, and `--no-plugins` skips it.
+Plugins and plugin settings are exported from the bb server the CLI is connected to, whether it runs on this Mac, on another host, or on Windows. The script detects a local server by checking that the server's data dir exists on this machine. For a remote server, a `path:` plugin's directory is not on this machine, so its source is kept as the server reports it and not probed locally. `--no-plugins` skips the export.
+
+The script runs bb through `BB_CLI` (the bb entry point; a non-executable one runs under `node`), not bare `bb` on PATH. A bb command that fails or prints nothing stops the script before anything is committed, so `bb/plugins.json` and `bb/plugin-settings.json` are never written partially or with dropped fields. `--dry-run` writes the two files, prints their diff against HEAD and commits nothing.
 
 Git pulls and pushes use the `bogxxx` gh account's token for that one command. The script never runs `gh auth switch`, because bb's Copilot integration depends on the active gh account. Set `BB_SETUP_GH_USER` to use another account.
 

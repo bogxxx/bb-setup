@@ -70,7 +70,8 @@ foreach ($p in ($plugins | Sort-Object id)) {
   $entry = [ordered]@{ id = $p.id; source = $p.source; enabled = [bool]$p.enabled }
   if ($p.source -notlike 'path:*') {
     # A git plugin may live in a subdirectory of its repo; bb records that, so the manifest keeps it.
-    $said = (bb plugin source $p.id 2>$null | Out-String)
+    $said = (bb plugin source $p.id | Out-String)
+    if ($LASTEXITCODE -or $said -notmatch '(?m)^\s*requested:') { throw "bb plugin source $($p.id) failed or printed no source; nothing written" }
     if ($said -match '(?m)^\s*subdirectory:\s*(.+?)\s*$') { $entry.subdirectory = $Matches[1] }
   }
   if ($p.source -like 'path:*') {

@@ -13,7 +13,7 @@
     },
     {
       "id": "ai-usage",
-      "source": "git:/home/opc/src/bb-plugin-ai-usage@e3bd9a5dba8514506b1369dbc0e764ed79d9aec5",
+      "source": "path:/home/opc/src/bb-plugin-ai-usage",
       "enabled": true
     },
     {

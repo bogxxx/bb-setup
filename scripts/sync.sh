@@ -2,15 +2,17 @@
 # macOS / Linux counterpart of sync.ps1 (and of the link part of install.ps1).
 #
 # Links the live folders and files to this repo, exports the plugin list and
-# settings when the bb server runs on this machine, then commits and pushes.
+# settings of the bb server the CLI is connected to, then commits and pushes.
 # Safe to run again; the first run on a new Mac is the install.
 #
 #   scripts/sync.sh                    # commit with a default message
 #   scripts/sync.sh -m "Add X plugin"  # your message
 #   scripts/sync.sh --no-push          # capture and commit only
-#   scripts/sync.sh --dry-run          # capture only, show git status
-#   scripts/sync.sh --plugins          # force plugin export (default: only if the bb server is local)
-#   scripts/sync.sh --no-plugins       # skip plugin export
+#   scripts/sync.sh --dry-run          # capture bb/*.json, print its diff against HEAD, commit nothing
+#   scripts/sync.sh --no-plugins       # skip the plugin export
+#
+# A bb command that fails or prints nothing stops the script before anything is
+# committed, so bb/plugins.json and bb/plugin-settings.json are never written degraded.
 #
 # Git auth: pushes and pulls with the `bogxxx` gh account's token, passed to git
 # for that one command. The active gh account is never switched, because the
@@ -22,15 +24,14 @@ BB_DIR="$HOME/.bb"
 CLAUDE_DIR="$HOME/.claude"
 GH_USER="${BB_SETUP_GH_USER:-bogxxx}"
 
-MESSAGE="Sync BB setup"; PUSH=1; DRY=0; PLUGINS=auto
+MESSAGE="Sync BB setup"; PUSH=1; DRY=0; PLUGINS=1
 while [ $# -gt 0 ]; do
   case "$1" in
     -m|--message) MESSAGE="$2"; shift 2 ;;
     --no-push) PUSH=0; shift ;;
     --dry-run) DRY=1; shift ;;
-    --plugins) PLUGINS=1; shift ;;
     --no-plugins) PLUGINS=0; shift ;;
-    -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,/^set -/p' "$0" | sed '$d'; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -61,9 +62,14 @@ for d in "$REPO"/skills/*/; do
   [ -f "${d}SKILL.md" ] && LINKS+=("$BB_DIR/skills/$(basename "$d")|${d%/}")
 done
 
-# `bb` on PATH can fail silently when the CLI lost its executable bit; fall back to node.
+# Runs the bb CLI at BB_CLI. bb on PATH can fail silently in agent sandboxes, so a
+# BB_CLI entry point that is not executable runs under node.
 bb() {
-  if [ -n "${BB_CLI:-}" ] && [ -f "$BB_CLI" ] && [ ! -x "$BB_CLI" ]; then node "$BB_CLI" "$@"; else command bb "$@"; fi
+  if [ -n "${BB_CLI:-}" ] && [ -f "$BB_CLI" ]; then
+    if [ -x "$BB_CLI" ]; then "$BB_CLI" "$@"; else node "$BB_CLI" "$@"; fi
+  else
+    command bb "$@"
+  fi
 }
 
 # Run git with the token of $GH_USER without touching gh's active account.
@@ -101,30 +107,45 @@ fi
 echo "Links:"
 for pair in "${LINKS[@]}"; do ensure_link "${pair%%|*}" "${pair#*|}"; done
 
-if [ "$PLUGINS" = auto ]; then
-  # Plugins and settings live on the bb server. Only export them when that server
-  # is this machine; otherwise the Windows host owns plugins.json.
-  data_dir="$(bb status 2>/dev/null | sed -n 's/^Data dir: //p')"
-  case "$data_dir" in /*) PLUGINS=1 ;; *) PLUGINS=0 ;; esac
-  [ "$PLUGINS" = 0 ] && echo "Plugins: skipped, bb server is not local (${data_dir:-unknown})"
-fi
-
 if [ "$PLUGINS" = 1 ]; then
   echo "Plugins:"
   tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-  bb plugin list --json > "$tmp/plugins.json"
+  fail() { echo "error: $*; plugin export stopped, nothing committed" >&2; exit 1; }
+
+  status="$(bb status)" || fail "bb status failed"
+  data_dir="$(printf '%s\n' "$status" | sed -n 's/^Data dir: //p')"
+  [ -n "$data_dir" ] || fail "bb status shows no data dir"
+  # The server's data dir exists on this machine only when the server runs here. A remote
+  # server's files are not readable from here, so path plugins are kept as the server reports them.
+  if [ -d "$data_dir" ]; then server_local=1; server_kind=local; else server_local=0; server_kind=remote; fi
+  echo "  bb server is $server_kind ($data_dir)"
+
+  bb plugin list --json > "$tmp/plugins.json" || fail "bb plugin list failed"
+  [ -s "$tmp/plugins.json" ] || fail "bb plugin list printed nothing"
   node -e '
     const fs = require("fs");
     const { plugins } = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-    const ids = plugins.filter(p => p.hasSettings).map(p => p.id).sort();
-    fs.writeFileSync(process.argv[2], ids.map(id => id + "\n").join(""));
-  ' "$tmp/plugins.json" "$tmp/settings-ids"
+    const ids = (keep) => plugins.filter(keep).map(p => p.id).sort().map(id => id + "\n").join("");
+    fs.writeFileSync(process.argv[2], ids(p => p.hasSettings));
+    fs.writeFileSync(process.argv[3], ids(p => !p.source.startsWith("builtin:") && !p.source.startsWith("path:")));
+  ' "$tmp/plugins.json" "$tmp/settings-ids" "$tmp/git-ids" || fail "could not read bb plugin list"
+
   while read -r id; do
-    [ -n "$id" ] && bb plugin config "$id" --json > "$tmp/config-$id.json" < /dev/null
+    [ -n "$id" ] || continue
+    bb plugin config "$id" --json > "$tmp/config-$id.json" < /dev/null || fail "bb plugin config $id failed"
+    [ -s "$tmp/config-$id.json" ] || fail "bb plugin config $id printed nothing"
   done < "$tmp/settings-ids"
+
+  # A git plugin may live in a subdirectory of its repo; bb reports the requested source and the subdirectory.
+  while read -r id; do
+    [ -n "$id" ] || continue
+    bb plugin source "$id" > "$tmp/source-$id.txt" < /dev/null || fail "bb plugin source $id failed"
+    grep -q '^  requested: ' "$tmp/source-$id.txt" || fail "bb plugin source $id reported no requested source"
+  done < "$tmp/git-ids"
+
   node -e '
     const fs = require("fs"), path = require("path"), cp = require("child_process");
-    const [tmp, repo, home] = process.argv.slice(1);
+    const [tmp, repo, home, serverLocal] = process.argv.slice(1);
     const { plugins } = JSON.parse(fs.readFileSync(path.join(tmp, "plugins.json"), "utf8"));
     const installed = [], builtinsEnabled = {};
     for (const p of [...plugins].sort((a, b) => a.id.localeCompare(b.id))) {
@@ -132,25 +153,22 @@ if [ "$PLUGINS" = 1 ]; then
       const e = { id: p.id, source: p.source, enabled: !!p.enabled };
       if (p.source.startsWith("path:")) {
         const dir = p.source.slice(5);
-        if (dir.startsWith(repo + "/")) e.source = "repo:" + dir.slice(repo.length + 1);
-        else {
+        // Only a server on this machine has its path here to inspect; a remote path is kept as reported.
+        if (serverLocal === "1" && dir.startsWith(repo + "/")) e.source = "repo:" + dir.slice(repo.length + 1);
+        else if (serverLocal === "1") {
           let origin = "";
           try { origin = cp.execFileSync("git", ["-C", dir, "remote", "get-url", "origin"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim(); } catch {}
           if (origin) { e.clone = origin; e.path = dir.replace(home, "~"); }
-          else console.error(`warning: ${p.id} is a local path outside the repo with no git remote: ${dir}`);
+          else console.error(`warning: ${p.id} is a local path outside the repo with no git remote, kept as ${p.source}`);
         }
-      }
-      // A git plugin may live in a subdirectory of its repo; bb records that, so the manifest keeps it.
-      else {
-        try {
-          const said = cp.execFileSync("bb", ["plugin", "source", p.id], { stdio: ["ignore", "pipe", "ignore"] }).toString();
-          const sub = said.match(/^\s*subdirectory:\s*(.+?)\s*$/m);
-          if (sub) e.subdirectory = sub[1];
-        } catch {}
+      } else {
+        const said = fs.readFileSync(path.join(tmp, `source-${p.id}.txt`), "utf8");
+        e.source = said.match(/^\s*requested:\s*(.+?)\s*$/m)[1];
+        const sub = said.match(/^\s*subdirectory:\s*(.+?)\s*$/m);
+        if (sub) e.subdirectory = sub[1];
       }
       installed.push(e);
     }
-    fs.writeFileSync(path.join(repo, "bb/plugins.json"), JSON.stringify({ installed, builtinsEnabled }, null, 2) + "\n");
     const settings = {};
     for (const p of plugins.filter(p => p.hasSettings).sort((a, b) => a.id.localeCompare(b.id))) {
       const cfg = JSON.parse(fs.readFileSync(path.join(tmp, `config-${p.id}.json`), "utf8"));
@@ -164,16 +182,22 @@ if [ "$PLUGINS" = 1 ]; then
       }
       if (Object.keys(changed).length) settings[p.id] = changed;
     }
+    fs.writeFileSync(path.join(repo, "bb/plugins.json"), JSON.stringify({ installed, builtinsEnabled }, null, 2) + "\n");
     fs.writeFileSync(path.join(repo, "bb/plugin-settings.json"), JSON.stringify(settings, null, 2) + "\n");
     console.log(`  ${installed.length} installed plugins, ${Object.keys(settings).length} with custom settings`);
-  ' "$tmp" "$REPO" "$HOME"
+  ' "$tmp" "$REPO" "$HOME" "$server_local" || fail "could not write the plugin files"
 fi
 
 cd "$REPO"
 # role-picker ships the agent files it spawns with; generate them from claude/agents and cursor/agents.
 node "$(dirname "$0")/../plugins/bb-plugin-role-picker/scripts/gen-agents.mjs"
 git add -A
-if [ "$DRY" = 1 ]; then git status --short; exit 0; fi
+if [ "$DRY" = 1 ]; then
+  git status --short
+  git diff --cached -- bb/
+  git reset -q
+  exit 0
+fi
 if [ -z "$(git status --porcelain)" ]; then echo "No changes."; exit 0; fi
 git commit -q -m "$MESSAGE"
 echo "Committed: $MESSAGE"
