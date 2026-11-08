@@ -133,6 +133,16 @@ export function left(w: Window | undefined): string {
   return `${w.stale ? "~" : ""}${percentLeft(w)}%`;
 }
 
+/** A window's bar: its % left, the figure its headline reads; 0 when the window is not known. */
+export function barPercent(w: Window | undefined): number {
+  return w !== undefined && known(w) ? percentLeft(w) : 0;
+}
+
+/** The state that colours a window's bar; "unknown" when the window is not known. */
+export function barState(w: Window | undefined): string {
+  return w !== undefined && known(w) ? w.state : "unknown";
+}
+
 /** A window's name beside the main one: "7d Fable" is "Fable" when the main window is "7d". */
 export function shortName(a: TeamAccount, name: string): string {
   const main = a.quota?.windows.find((w) => w.main)?.name;
@@ -212,11 +222,17 @@ function windowMinutes(name: string): number | null {
   return m[2] === "m" ? n : m[2] === "h" ? n * 60 : n * 1440;
 }
 
-/** "113% at reset · this week's pace"; "would reach 108% at reset" for a stopped forecast. */
+/**
+ * The forecast on the remaining scale: "42% left at reset · this week's pace";
+ * "runs out before reset" once the projection passes 100% used. A stopped
+ * forecast reads "would". Null when there is no forecast or the window is already out.
+ */
 export function forecastLine(w: Window): string | null {
   const f = w.forecast;
-  if (f === null) return null;
-  return `${f.stopped ? "would reach " : ""}${Math.round(f.percent)}% at reset · ${pace(w)}`;
+  if (f === null || percentLeft(w) === 0) return null;
+  const used = Math.round(f.percent);
+  if (used >= 100) return `${f.stopped ? "would run out" : "runs out"} before reset · ${pace(w)}`;
+  return `${f.stopped ? "would have " : ""}${100 - used}% left at reset · ${pace(w)}`;
 }
 
 /**

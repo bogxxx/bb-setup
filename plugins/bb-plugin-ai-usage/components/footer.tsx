@@ -2,7 +2,7 @@
 // each team subscription. It loads only while it is open.
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { Button } from "@/components/ui/button";
-import { attentionTone, attentionWords, left, limitingWindows, provider } from "../src/format";
+import { attentionTone, attentionWords, barPercent, barState, left, limitingWindows, provider } from "../src/format";
 import { Bar, Dot, Spinner } from "./bits";
 import { PANEL_PATH, useAiUsage } from "./use-ai-usage";
 
@@ -50,7 +50,7 @@ export function FooterCard({ dismiss }: { dismiss: () => void }) {
                   </span>
                   <span className="text-muted-foreground">{w !== undefined ? left(w) : "?"}</span>
                 </div>
-                <Bar percent={w?.percent ?? 0} state={w?.state ?? "unknown"} />
+                <Bar percent={barPercent(w)} state={barState(w)} />
               </li>
             ))}
           </ul>

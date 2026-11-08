@@ -9,13 +9,14 @@ import {
   ago,
   attentionTone,
   attentionWords,
+  barPercent,
+  barState,
   cardWindows,
   clock,
   deviceName,
   duration,
   extraUsageWords,
   forecastLine,
-  known,
   left,
   matrixNote,
   matrixView,
@@ -114,7 +115,7 @@ function Subscriptions({ report, now, timeZone }: ReportProps) {
                           ) : null}
                         </span>
                       </div>
-                      <Bar percent={known(w) ? w.percent : 0} state={known(w) ? w.state : "unknown"} />
+                      <Bar percent={barPercent(w)} state={barState(w)} />
                       {forecast !== null ? <div className="text-[11px] text-muted-foreground">{forecast}</div> : null}
                     </div>
                   );
