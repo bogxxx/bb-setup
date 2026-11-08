@@ -1,1 +1,1 @@
-See Claude Code background agents on a thread: status, usage, chat, and thinking. The Subagents tab and `bb claude-subagents` read the primary host's Claude session files. Remote hosts are not supported.
+See Claude Code background agents on a thread: status, usage, chat, and thinking. The Subagents tab and `bb claude-subagents` read the Claude Code session files on the thread's host, primary or not, when the project sits under a home folder (`/Users/<name>`, `/home/<name>`, `/root`, or `C:\Users\<name>`). Other paths are not supported.

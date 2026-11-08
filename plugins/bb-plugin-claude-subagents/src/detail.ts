@@ -5,7 +5,6 @@ import { discoverSessionDirectory, readHostText, rememberSessionDirectory, type 
 import { agentRow, NOTICES, openAgent } from "./roster";
 import {
   agentPaths,
-  claudeHome,
   filesInDirectory,
   isAgentOutputFile,
   isFamilyId,
@@ -33,7 +32,7 @@ export async function loadSubagentDetail(
   const opened = await openAgent(sdk, input.threadId, input.familyId);
   const latest = latestRun(opened.agent);
   const finished = latest?.status !== "pending";
-  const loaded = await loadTranscript(sdk, opened.hostId, opened.cwd, opened.agent, finished);
+  const loaded = await loadTranscript(sdk, opened.hostId, opened.cwd, opened.home, opened.agent, finished);
   if (loaded.parsed) {
     const top = loaded.parsed.models.resolved[0]?.model;
     if (top) opened.agent.resolvedModel = top;
@@ -87,6 +86,7 @@ async function loadTranscript(
   sdk: Sdk,
   hostId: string,
   cwd: string,
+  home: string,
   agent: AgentRecord,
   finished: boolean,
 ): Promise<LoadedTranscript> {
@@ -103,7 +103,6 @@ async function loadTranscript(
     };
   }
 
-  const home = claudeHome(cwd);
   const encoded = isSessionId(agent.sessionId) ? agentPaths(home, cwd, agent.sessionId, agent.familyId) : null;
   let read: ReadResult = { ok: false, missing: true, message: NOTICES.transcriptMissing };
   let jsonlPath = encoded?.jsonl ?? null;

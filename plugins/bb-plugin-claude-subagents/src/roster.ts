@@ -27,7 +27,8 @@ const MAX_THREADS = 20;
 export const NOTICES = {
   notClaude: "This thread is not a Claude Code thread.",
   noEnvironment: "This thread has no environment.",
-  unsupportedHost: "Claude subagents are available on the primary host only.",
+  unsupportedHost:
+    "Claude subagents find transcripts only for a project under a home folder: /Users/<name>, /home/<name>, /root, or C:\\Users\\<name>.",
   transcriptMissing: "Transcript file not found",
   skipTranscript: "Claude did not record a transcript",
 } as const;
@@ -38,7 +39,7 @@ type ThreadCache = {
 };
 
 type OpenThread =
-  | { ok: true; threadStatus: string; hostId: string; cwd: string; cache: ThreadCache }
+  | { ok: true; threadStatus: string; hostId: string; cwd: string; home: string; cache: ThreadCache }
   | { ok: false; result: ListSubagentsResult };
 
 const threads = new Map<string, ThreadCache>();
@@ -52,7 +53,7 @@ export async function listSubagents(sdk: Sdk, threadId: string): Promise<ListSub
   await Promise.all(
     selected.map((row) => {
       const agent = opened.cache.roster.agents.get(row.familyId);
-      return agent ? ensureMeta(sdk, agent, opened.hostId, opened.cwd) : Promise.resolve();
+      return agent ? ensureMeta(sdk, agent, opened.hostId, opened.cwd, opened.home) : Promise.resolve();
     }),
   );
   const rows = projectRoster(opened.cache.roster, { threadStatus: opened.threadStatus, now: Date.now() });
@@ -71,7 +72,7 @@ export async function openAgent(
   sdk: Sdk,
   threadId: string,
   familyId: string,
-): Promise<{ threadStatus: string; hostId: string; cwd: string; agent: AgentRecord }> {
+): Promise<{ threadStatus: string; hostId: string; cwd: string; home: string; agent: AgentRecord }> {
   const opened = await openThread(sdk, threadId);
   if (!opened.ok) {
     throw new experimental_PluginRpcRefusal({ code: "not_found", message: opened.result.notice ?? "Thread not found" });
@@ -79,8 +80,8 @@ export async function openAgent(
   await syncEvents(sdk, threadId, opened.cache);
   const agent = opened.cache.roster.agents.get(familyId);
   if (!agent) throw new experimental_PluginRpcRefusal({ code: "not_found", message: "Agent not found" });
-  await ensureMeta(sdk, agent, opened.hostId, opened.cwd);
-  return { threadStatus: opened.threadStatus, hostId: opened.hostId, cwd: opened.cwd, agent };
+  await ensureMeta(sdk, agent, opened.hostId, opened.cwd, opened.home);
+  return { threadStatus: opened.threadStatus, hostId: opened.hostId, cwd: opened.cwd, home: opened.home, agent };
 }
 
 export function agentRow(agent: AgentRecord, threadStatus: string, now: number) {
@@ -109,13 +110,13 @@ async function openThread(sdk: Sdk, threadId: string): Promise<OpenThread> {
   }
   if (!environment.path) return { ok: false, result: emptyList("no_environment", NOTICES.noEnvironment) };
   const config = await sdk.system.config();
-  if (!config.primaryHostId || environment.hostId !== config.primaryHostId) {
-    return { ok: false, result: emptyList("unsupported_host", NOTICES.unsupportedHost) };
-  }
+  const local = !!config.primaryHostId && environment.hostId === config.primaryHostId;
+  const home = claudeHome(environment.path, local);
+  if (home === null) return { ok: false, result: emptyList("unsupported_host", NOTICES.unsupportedHost) };
   let cache = threads.get(threadId);
   if (!cache) cache = { roster: createRoster(), hitPageCap: false };
   touch(threadId, cache);
-  return { ok: true, threadStatus: thread.status, hostId: environment.hostId, cwd: environment.path, cache };
+  return { ok: true, threadStatus: thread.status, hostId: environment.hostId, cwd: environment.path, home, cache };
 }
 
 async function syncEvents(sdk: Sdk, threadId: string, cache: ThreadCache): Promise<void> {
@@ -145,11 +146,10 @@ async function syncEvents(sdk: Sdk, threadId: string, cache: ThreadCache): Promi
   cache.hitPageCap = hitCap;
 }
 
-async function ensureMeta(sdk: Sdk, agent: AgentRecord, hostId: string, cwd: string): Promise<void> {
+async function ensureMeta(sdk: Sdk, agent: AgentRecord, hostId: string, cwd: string, home: string): Promise<void> {
   const status = displayStatus(latestRun(agent)?.status ?? "");
   if (agent.metaCached && status !== "in_progress") return;
   if (!isSessionId(agent.sessionId)) return;
-  const home = claudeHome(cwd);
   const encoded = agentPaths(home, cwd, agent.sessionId, agent.familyId);
   if (!encoded) return;
   let read = await readHostText(sdk, hostId, encoded.meta);

@@ -16,7 +16,7 @@ export function subagentsCommand(handlers: Handlers) {
         options: {
           thread: {
             type: "string",
-            description: "Thread id (thr_…). Defaults to the current thread. Primary host only.",
+            description: "Thread id (thr_…). Defaults to the current thread.",
           },
           json: { type: "boolean", description: "Print the list as JSON" },
         },

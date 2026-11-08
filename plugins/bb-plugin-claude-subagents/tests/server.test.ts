@@ -38,6 +38,8 @@ function background(seq: number, item: Record<string, unknown>, sessionId: strin
 
 async function start(options: {
   providerId?: string;
+  hostId?: string;
+  cwd?: string;
   events?: unknown[];
   files?: Record<string, string>;
   listPaths?: () => Promise<{ paths: { name: string; path: string }[]; truncated: boolean }>;
@@ -53,8 +55,8 @@ async function start(options: {
     }),
   );
   harness.sdk.stub("environments.get", async () => ({
-    hostId: "host-1",
-    path: "C:\\work\\repo",
+    hostId: options.hostId ?? "host-1",
+    path: options.cwd ?? "C:\\work\\repo",
   }));
   harness.sdk.stub("system.config", async () => ({ primaryHostId: "host-1" }));
   harness.sdk.stub("threads.events.list", async (...args: unknown[]) => {
@@ -299,5 +301,39 @@ describe("claude-subagents server", () => {
     expect(detail.models.requested[0]?.startsWith("model-")).toBe(true);
     expect(detail.models.requested[0]?.length).toBeLessThanOrEqual(IDENTITY_LIMIT);
     expect(detail.models.requested[0]).not.toBe(longModel);
+  });
+});
+
+describe("claude-subagents on a non-primary host", () => {
+  it("reads the meta and transcript under the remote home and refuses a project outside home", async () => {
+    const sessionId = "99999999-9999-4999-8999-999999999999";
+    const familyId = "machineagent";
+    const cwd = "/Users/bohdan.krechko/Projects/monero";
+    const reads: string[] = [];
+    const jsonl = userLine("from the mac", "2026-01-01T00:00:00.000Z");
+    const harness = await start({
+      hostId: "host-mac",
+      cwd,
+      events: [background(1, { id: "run-1", familyId, status: "completed", description: "Mac" }, sessionId)],
+      read: (path) => {
+        reads.push(path);
+        if (path.endsWith(".meta.json")) return META;
+        if (path.endsWith(".jsonl")) return jsonl;
+        return null;
+      },
+    });
+    const threadId = "thr_mac";
+    const listed = (await harness.behavior.callRpc("listSubagents", { threadId })) as ListSubagentsResult;
+    expect(listed).toMatchObject({ state: "ok", agents: [{ familyId, agentType: "worker" }] });
+    const detail = (await harness.behavior.callRpc("subagentDetail", { threadId, familyId })) as SubagentDetailResult;
+    expect(detail.transcript).toMatchObject({ source: "jsonl" });
+    const base = `/Users/bohdan.krechko/.claude/projects/-Users-bohdan-krechko-Projects-monero/${sessionId}/subagents/agent-${familyId}`;
+    expect(reads).toContain(`${base}.meta.json`);
+    expect(reads).toContain(`${base}.jsonl`);
+
+    const outside = await start({ hostId: "host-mac", cwd: "/opt/monero" });
+    const refused = (await outside.behavior.callRpc("listSubagents", { threadId: "thr_outside" })) as ListSubagentsResult;
+    expect(refused).toMatchObject({ state: "unsupported_host", agents: [] });
+    expect(refused.notice).toContain("home folder");
   });
 });

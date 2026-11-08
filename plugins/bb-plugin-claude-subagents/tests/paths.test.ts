@@ -55,7 +55,7 @@ describe("agent paths", () => {
   it("builds a POSIX home without a backslash directory segment", () => {
     withConfigDir(undefined, () => {
       const cwd = "/home/me/repo";
-      const home = claudeHome(cwd);
+      const home = claudeHome(cwd, true)!;
       const paths = agentPaths(home, cwd, SESSION, FAMILY);
       expect(paths).not.toBeNull();
       for (const filePath of [home, paths!.directory, paths!.meta, paths!.jsonl]) {
@@ -68,12 +68,39 @@ describe("agent paths", () => {
 
   it("uses path.win32 for a Windows home and honors CLAUDE_CONFIG_DIR", () => {
     withConfigDir(undefined, () => {
-      expect(claudeHome("C:\\work\\repo")).toBe(path.win32.join(os.homedir(), ".claude"));
+      expect(claudeHome("C:\\work\\repo", true)).toBe(path.win32.join(os.homedir(), ".claude"));
     });
     withConfigDir("/opt/claude", () => {
-      expect(claudeHome("/home/me/repo")).toBe("/opt/claude");
-      expect(claudeHome("C:\\work\\repo")).toBe("/opt/claude");
+      expect(claudeHome("/home/me/repo", true)).toBe("/opt/claude");
+      expect(claudeHome("C:\\work\\repo", true)).toBe("/opt/claude");
     });
+  });
+
+  it("accepts the macOS temp task output path", () => {
+    expect(
+      isAgentOutputFile(`/private/tmp/claude-501/-Users-bohdan-krechko-Projects-monero/${SESSION}/tasks/${FAMILY}.output`, SESSION, FAMILY),
+    ).toBe(true);
+  });
+});
+
+describe("claude home on another host", () => {
+  it("derives the home from the environment path and ignores CLAUDE_CONFIG_DIR", () => {
+    withConfigDir("/opt/claude", () => {
+      expect(claudeHome("/Users/bohdan.krechko/Projects/monero", false)).toBe("/Users/bohdan.krechko/.claude");
+      expect(claudeHome("/home/alice/src/app", false)).toBe("/home/alice/.claude");
+      expect(claudeHome("/root/work", false)).toBe("/root/.claude");
+      expect(claudeHome("C:\\Users\\krech\\projects\\monero", false)).toBe("C:\\Users\\krech\\.claude");
+      expect(claudeHome("D:/Users/krech/projects/monero", false)).toBe("D:\\Users\\krech\\.claude");
+    });
+  });
+
+  it("returns null for a project outside a home folder", () => {
+    expect(claudeHome("/opt/monero", false)).toBeNull();
+    expect(claudeHome("/Users", false)).toBeNull();
+    expect(claudeHome("/home", false)).toBeNull();
+    expect(claudeHome("/rootless/repo", false)).toBeNull();
+    expect(claudeHome("C:\\work\\repo", false)).toBeNull();
+    expect(claudeHome("C:\\Users", false)).toBeNull();
   });
 });
 

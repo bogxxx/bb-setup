@@ -17,12 +17,25 @@ export function encodeCwd(cwd: string): string {
   return cwd.replace(/[^A-Za-z0-9]/g, "-");
 }
 
-export function claudeHome(cwd: string): string {
+export function claudeHome(cwd: string, local: boolean): string | null {
+  if (!local) {
+    const home = remoteHome(cwd);
+    return home === null ? null : pathApiForCwd(cwd).join(home, ".claude");
+  }
   const configured = process.env.CLAUDE_CONFIG_DIR;
   if (configured !== undefined) return configured;
   const api = pathApiForCwd(cwd);
   const home = api === path.win32 ? os.homedir() : os.homedir().replace(/\\/g, "/");
   return api.join(home, ".claude");
+}
+
+function remoteHome(cwd: string): string | null {
+  const windows = /^([A-Za-z]:)[\\/]Users[\\/]([^\\/]+)(?:[\\/]|$)/i.exec(cwd);
+  if (windows) return `${windows[1]}\\Users\\${windows[2]}`;
+  const posix = /^\/(Users|home)\/([^/]+)(?:\/|$)/.exec(cwd);
+  if (posix) return `/${posix[1]}/${posix[2]}`;
+  if (/^\/root(?:\/|$)/.test(cwd)) return "/root";
+  return null;
 }
 
 export function pathApiForCwd(cwd: string): path.PlatformPath {
@@ -61,7 +74,7 @@ export function isAgentOutputFile(filePath: string, sessionId: string, familyId:
   const normalized = filePath.replace(/\\/g, "/");
   if (normalized.split("/").some((segment) => segment === "." || segment === "..")) return false;
   const pattern = new RegExp(
-    `/claude/[^/]+/${escapeRegExp(sessionId)}/tasks/${escapeRegExp(familyId)}\\.output$`,
+    `/claude(?:-[^/]+)?/[^/]+/${escapeRegExp(sessionId)}/tasks/${escapeRegExp(familyId)}\\.output$`,
   );
   return pattern.test(normalized);
 }
