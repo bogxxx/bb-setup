@@ -6,6 +6,6 @@
     "childLevel": "muted"
   },
   "role-picker": {
-    "defaultRole": "interviewer"
+    "defaultRole": "orchestrator"
   }
 }

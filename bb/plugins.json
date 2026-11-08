@@ -40,7 +40,7 @@
     "ask-user-question": true,
     "automations": true,
     "bb--composer": true,
-    "bb--connect-next": false,
+    "bb--connect-next": true,
     "bb--git": true,
     "bb--github-pr-status": true,
     "bb--mcp": false,
