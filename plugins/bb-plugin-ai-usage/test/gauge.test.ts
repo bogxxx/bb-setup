@@ -2,7 +2,7 @@
 // forecast reads % left at reset, or that the window runs out before reset.
 import { describe, expect, test } from "bun:test";
 import demoTeam from "../demo/team.json" with { type: "json" };
-import { barPercent, barState, forecastLine, known, left } from "../src/format";
+import { barPercent, barState, forecastLine, known, left, percentLeft } from "../src/format";
 import { readReport, type Window } from "../src/report";
 
 const win = (over: Partial<Window>): Window => ({
@@ -117,5 +117,31 @@ describe("forecast", () => {
         }
       }
     }
+  });
+});
+
+describe("edge inputs", () => {
+  test("a projection just under 100% used is not an exhaustion", () => {
+    expect(forecastLine(win({ percent: 50, forecast: forecast(99.4) }))).toBe("1% left at reset · this week's pace");
+    expect(forecastLine(win({ percent: 50, forecast: forecast(99.6) }))).toBe("0% left at reset · this week's pace");
+    expect(forecastLine(win({ percent: 50, forecast: forecast(99.6, true) }))).toBe("would have 0% left at reset · this week's pace");
+  });
+
+  test("exactly 100% used still runs out", () => {
+    expect(forecastLine(win({ percent: 50, forecast: forecast(100.0) }))).toBe("runs out before reset · this week's pace");
+  });
+
+  test("a negative window reading is 100% left, and the bar agrees with the headline", () => {
+    for (const percent of [-1, -0.5]) {
+      const w = win({ percent });
+      expect(percentLeft(w)).toBe(100);
+      expect(left(w)).toBe("100%");
+      expect(barPercent(w)).toBe(100);
+    }
+  });
+
+  test("a negative forecast reads at most 100% left", () => {
+    expect(forecastLine(win({ percent: 10, forecast: forecast(-1) }))).toBe("100% left at reset · this week's pace");
+    expect(forecastLine(win({ percent: 10, forecast: forecast(-0.5, true) }))).toBe("would have 100% left at reset · this week's pace");
   });
 });

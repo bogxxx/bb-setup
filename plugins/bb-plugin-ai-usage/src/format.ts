@@ -124,7 +124,7 @@ export function known(w: Window): boolean {
 }
 
 export function percentLeft(w: Window): number {
-  return Math.max(100 - Math.floor(w.percent), 0);
+  return Math.min(Math.max(100 - Math.floor(w.percent), 0), 100);
 }
 
 /** What is left of a window: "42%", "~42%" for a stale reading, "?" when not known. */
@@ -230,9 +230,9 @@ function windowMinutes(name: string): number | null {
 export function forecastLine(w: Window): string | null {
   const f = w.forecast;
   if (f === null || percentLeft(w) === 0) return null;
-  const used = Math.round(f.percent);
-  if (used >= 100) return `${f.stopped ? "would run out" : "runs out"} before reset · ${pace(w)}`;
-  return `${f.stopped ? "would have " : ""}${100 - used}% left at reset · ${pace(w)}`;
+  if (f.percent >= 100) return `${f.stopped ? "would run out" : "runs out"} before reset · ${pace(w)}`;
+  const left = Math.round(Math.min(Math.max(100 - f.percent, 0), 100));
+  return `${f.stopped ? "would have " : ""}${left}% left at reset · ${pace(w)}`;
 }
 
 /**
