@@ -1,6 +1,6 @@
 ---
 name: copilot-troubleshoot
-description: Troubleshoot and fix GitHub Copilot in bb on macOS (Windows equivalents noted). Use when Copilot threads fail, the model picker shows "Could not load model(s) for GitHub Copilot", the copilot CLI is missing or broken, copilot-acp is missing or dangling, a preToolUse hook fails closed with exit 127 so every tool is denied, or a Copilot agent pin is unavailable and falls back to another model.
+description: Troubleshoot and fix GitHub Copilot in bb on macOS (Windows equivalents noted). Use when Copilot threads fail, the model picker shows "Could not load model(s) for GitHub Copilot", the copilot CLI is missing or broken, copilot-acp is missing or dangling, a preToolUse hook fails closed with exit 127 so every tool is denied, a Copilot agent pin is unavailable and falls back to another model, or attachments fail with "Refusing to fetch project attachment over insecure server URL: http://…" because the bb server URL is plain HTTP.
 ---
 
 # Troubleshoot GitHub Copilot in bb
@@ -153,6 +153,49 @@ Refresh the catalog first (`copilot-acp --list-models --refresh`), because the c
 Fix: change the `model:` line in the agent file in `~/src/bb-setup/copilot/agents/`, to an id from the catalog. Then run `sync.sh -m "<what changed>"`. Start a new Copilot session to pick it up.
 
 Current pins on this machine: `orchestrator`, `planner`, and `reviewer` use `claude-opus-5.5-medium`. `worker` uses `gpt-6.1-terra-medium`. `explorer` uses `claude-haiku-5.5-medium`. `interviewer` uses `gpt-6.1-sol-medium`. All were present in the catalog on 2026-11-09.
+
+## 6. Attachments fail over plain HTTP
+
+Symptom: pasted images or files fail in a thread with `Failed to fetch attachment <name>: Refusing to fetch project attachment over insecure server URL: http://…`. Copilot is not the cause; this affects every provider on the machine. It is listed here because the fix lives with the other machine-side checks.
+
+Cause: the host daemon fetches attachments and self-updates only over `https:` or loopback (`127.0.0.1`, `localhost`, `::1`); see `usesSecureInternalFetchTransport` in `apps/host-daemon/src/server-client.ts`. A daemon on `http://<tailnet-ip>:38886` therefore cannot receive pasted screenshots or files. There is no setting to turn that off.
+
+```sh
+grep -h '"serverUrl"' ~/.bb-machines/*/config.json 2>/dev/null
+```
+
+Expected after the fix: `"serverUrl": "http://127.0.0.1:<port>"`. A `http://<tailnet-ip>:<port>` value is the failing state.
+
+Fix: run a loopback TCP forwarder on the machine (127.0.0.1:`<port>` to `<server-ip>:<port>`, bytes only), and point the daemon's server URL at the loopback address. This was verified on macOS (2026-11-09): attachments worked afterwards.
+
+Files in `~/src/bb-setup/skills/copilot-troubleshoot/assets/`: `bb-loopback-forward.py` (byte forwarder, placeholders `__SERVER_IP__` and `__PORT__`) and `com.bb-loopback.plist.template` (LaunchAgent, placeholders `__LABEL__`, `__FORWARDER__`, `__LOG__`). Use `~/Library/Application Support/bb-loopback/forward.py` and `~/Library/Logs/bb-loopback.log` unless the machine already has other paths.
+
+Install the forwarder (macOS):
+
+1. Fill in the template: `sed -e 's/__SERVER_IP__/<server-ip>/g' -e 's/__PORT__/<port>/g' ~/src/bb-setup/skills/copilot-troubleshoot/assets/bb-loopback-forward.py > "$HOME/Library/Application Support/bb-loopback/forward.py"` (create the directory first).
+2. Write the plist with the label, forwarder and log paths filled in, to `~/Library/LaunchAgents/<label>.plist`, then `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/<label>.plist`.
+3. Check: `launchctl print gui/$(id -u)/<label>` shows `state = running`, and `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:<port>/` returns the same code as `http://<server-ip>:<port>/`.
+
+New Mac: install the forwarder first, then enroll with `http://127.0.0.1:<port>` as the server URL. Untested: the enrollment command comes from the app and was not run against a loopback URL yet. If the installer insists on the public host, enroll as usual and switch afterwards with the steps below. The enrollment steps are in the `onboard-bb-machine` skill.
+
+Switch an enrolled daemon (macOS). Confirm the forwarder answers first; otherwise the daemon loses its connection.
+
+1. Back up `~/.bb-machines/<server-dir>/config.json` and the daemon plist `~/Library/LaunchAgents/app.getbb.host-daemon.<dir-with-dashes>-<hostId>.plist` (the `<dir-with-dashes>` is the data dir name with dots turned into dashes, for example `100-116-88-55-38886`).
+2. In `config.json`, set `"serverUrl": "http://127.0.0.1:<port>"`.
+3. In the plist, set the argument after `--server-url` (find its index with `plutil -p`; it is `ProgramArguments` item 7 in our file): `/usr/libexec/PlistBuddy -c "Set :ProgramArguments:7 http://127.0.0.1:<port>" <plist>`. The flag takes precedence over `config.json`, so both must change.
+4. Restart the daemon from a detached job, never from a bb thread: restarting it kills every bb thread on the machine. Put the restart in a script, for example `launchctl bootout gui/$(id -u)/<daemon-label>; launchctl bootstrap gui/$(id -u) <plist>`, and run it with `launchctl submit -l <job-label> -- /bin/bash <script>`. Remove the job when it has run (`launchctl remove <job-label>`). In our attempt the submitted job re-ran about every 10 seconds until it was removed, so do not leave it submitted.
+5. Verify: `logs/host-daemon.1.log` has `Connected to server` with `"serverUrl":"http://127.0.0.1:<port>"`, and a pasted image in a thread loads.
+
+Verify: `launchctl print gui/$(id -u)/<label>` shows `state = running`; the switch checks above pass; a pasted image in a thread loads.
+
+Rollback: stop the daemon the same way, restore the two backed-up files (or set `serverUrl` and the `--server-url` argument back to `http://<server-ip>:<port>`), and bootstrap the daemon again. The tailnet URL keeps chats working; only attachments and self-update fail on it. Unload the forwarder with `launchctl bootout gui/$(id -u)/<label>` when no machine uses it.
+
+Dead ends, so nobody retries them:
+
+- bb Connect is not a practical switch for an enrolled machine. The access provider is stored per machine (`hosts.server_access_provider_id`), a reconnect keeps it, and changing it needs a manual DB edit plus a reinstall.
+- The Mac has no out-of-band shell: Tailscale SSH and sshd are off, so a broken switch needs local access.
+- Windows: not done yet. The same idea (local forwarder, loopback server URL) should apply, but no Windows steps are verified here.
+- `predator` and `IAV-P-STD02-1` probably need the same fix. Not yet checked on either.
 
 ## Logs
 

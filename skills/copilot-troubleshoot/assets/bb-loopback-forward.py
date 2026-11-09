@@ -1,6 +1,6 @@
 """Loopback TCP forwarder: 127.0.0.1:<port> -> <server-ip>:<port> (bytes only, no inspection).
 
-Template for onboard-bb-machine. Replace __SERVER_IP__ and __PORT__ (both occurrences of
+Template for copilot-troubleshoot (section 6). Replace __SERVER_IP__ and __PORT__ (both occurrences of
 __PORT__ must match) before installing it, for example:
   sed -e 's/__SERVER_IP__/100.116.88.55/g' -e 's/__PORT__/38886/g' bb-loopback-forward.py
 
