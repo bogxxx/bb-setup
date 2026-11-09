@@ -1,9 +1,21 @@
 import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
+import { defineRpcContract, type BbPluginApi, type PluginInteractionResult } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { SHIPPED_AGENTS } from "./agents.generated.js";
+import {
+  ASK_RENDERER_ID,
+  ASK_SCHEMA_HINT,
+  ASK_TIMEOUT_MS,
+  askAnswers,
+  askCancelledMessage,
+  askTitle,
+  buildAskPayload,
+  describeAsk,
+  formatAskOutput,
+  parseAskInput,
+} from "./lib/ask.js";
 import { parseQuotaBlock, quotaBlockEnd, type QuotaBlock } from "./lib/quota-block.js";
 import { resolveReviewHostId, usageLimitsQuery, usageSkip } from "./lib/review-skip.js";
 
@@ -231,11 +243,19 @@ const ORCHESTRATOR_WAITING = [
   "Use bb thread wait <id> --timeout 4m only when you must block inside a turn, and repeat it rather than raising the timeout: the prompt cache expires after 5 minutes without a model call, and every wake-up after that re-sends the whole conversation at full price.",
 ].join(" ");
 
-const INTERVIEWER_PROCEDURE = [
+const INTERVIEWER_ASK_TOOL =
+  "Ask through the AskUserQuestion tool (the question card), one question at a time, or at most three independent ones in one call. Never put a wall of questions in chat. Give 2-4 concrete options, put the one you recommend first and mark it, and let the user write their own answer. If the tool is missing, dismissed, or times out, ask that one question in your reply and end the turn.";
+
+// GitHub Copilot has no question tool in bb (no plugin tools, no ask_user in ACP), so it asks
+// through the CLI, which opens the same card.
+const INTERVIEWER_ASK_CLI =
+  "Ask with bb roles ask --questions '<single-line JSON>' (the same schema as AskUserQuestion: {\"questions\":[{\"question\",\"header\" (at most 12 chars),\"options\":[{\"label\",\"description\"}] (2-4),\"multiSelect\":false}]}), one question at a time, or at most three independent ones in one call. Run it with bash in sync mode with a long initial_wait (e.g. 600) and keep calling read_bash until it finishes: it shows the question card and blocks until the user answers, then prints the answers as JSON. Never put a wall of questions in chat. Give 2-4 concrete options, put the one you recommend first and mark it, and let the user write their own answer. If it printed the answers JSON, use them whatever the exit code. If it exits 1 with an input error, fix the JSON and run it again. If it exits non-zero otherwise (the user dismissed the card or it timed out), ask that one question in your reply and end the turn.";
+
+const INTERVIEWER_PROCEDURE = (ask: string) => [
   "Role: prompt generator. You work like a business analyst: you turn the user's idea into a prompt for an Orchestrator thread. You do not do the work.",
   "Read-only. Do not create, edit, or delete files, do not commit, and run only read-only commands. Do not call spawn except with name explore (or bb plugin run role-picker spawn explore when the spawn tool is missing), only in a non-Personal project, and only for a narrow question whose answer depends on codebase facts. Wait with bb thread wait <id> --timeout 4m, repeated while the explorer is still running (never longer per call, so the prompt cache stays warm), then read bb thread output <id>. Never spawn contribute, plan, or review.",
   "Context first, briefly. Run bb status once (if bb fails, use node \"$BB_CLI\" status). If the project is Personal (proj_personal), there is no project, or the check fails, do not read, list, or search any files: interview only. In any other project, take one quick look inside the thread's workspace only (README, top-level layout, files plainly tied to the topic), then start asking. Never read or search outside the workspace (home folders, vaults, other repos), never grep recursively over large trees, and run no other bb diagnostics. Your first message to the user is a question.",
-  "Ask through the AskUserQuestion tool (the question card), one question at a time, or at most three independent ones in one call. Never put a wall of questions in chat. Give 2-4 concrete options, put the one you recommend first and mark it, and let the user write their own answer. If the tool is missing, dismissed, or times out, ask that one question in your reply and end the turn.",
+  ask,
   "Order. Ask a question only once the answers it depends on are settled. Cover what the task needs: the goal and the problem behind it; who it is for and what outcome means success; scope and explicit non-goals; constraints (technology, compatibility, security, data, time, cost); acceptance criteria that can be checked; priorities and what to cut first; risks, unknowns, and dependencies. Keep a helicopter view. Go into technical detail only where it changes scope, risk, or acceptance.",
   "Challenge. Do not agree passively. Push back on vague goals, hidden assumptions, scope creep, criteria nobody can test, and answers that contradict earlier ones. Say why and offer a sharper alternative. If the conversation already answers something, state it as an assumption for the user to confirm instead of asking.",
   "Stateless. Use only this conversation and what you read now. Do not save memories, notes, or files.",
@@ -244,11 +264,11 @@ const INTERVIEWER_PROCEDURE = [
   "Write it for an Orchestrator that has not seen this conversation: self-contained, imperative, no filler, nothing addressed back to the user.",
 ].join(" ");
 
-export function procedure(_providerId: string, role: Role): string {
+export function procedure(providerId: string, role: Role): string {
   if (role === "regular") {
     return "Role: regular. This is the default thread: do the work in this session and use any agents or tools you need.";
   }
-  if (role === "interviewer") return INTERVIEWER_PROCEDURE;
+  if (role === "interviewer") return INTERVIEWER_PROCEDURE(COPILOT_PROVIDERS.has(providerId) ? INTERVIEWER_ASK_CLI : INTERVIEWER_ASK_TOOL);
   return [
     "You spawn only. Do not explore, plan, contribute, or review in this session yourself: delegate with spawn or the Task tool.",
     "Call spawn with name explore, contribute, plan, or review. The assignment is only the task.",
@@ -481,15 +501,36 @@ export default async function plugin(bb: BbPluginApi) {
       };
   }
 
+  // A path a CLI caller passes is on the invoking thread's machine, not necessarily the server's.
+  async function readInvokerFile(threadId: string, cwd: string | undefined, filePath: string): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+    const thread = await bb.sdk.threads.get({ threadId });
+    const hostId = thread.environmentId
+      ? (await bb.sdk.environments.get({ environmentId: thread.environmentId })).hostId
+      : undefined;
+    const absolute = /^([a-zA-Z]:[\\/]|[\\/])/.test(filePath) || !cwd ? filePath : path.join(cwd, filePath);
+    try {
+      const file = await bb.sdk.files.read({ path: absolute, ...(hostId ? { hostId } : {}) });
+      if (!("content" in file)) return { ok: false, error: `Could not read ${absolute}.` };
+      return { ok: true, text: file.contentEncoding === "base64" ? Buffer.from(file.content, "base64").toString("utf8") : file.content };
+    } catch (error) {
+      return { ok: false, error: `Could not read ${absolute}: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
   bb.cli.register({
     name: "roles",
-    summary: "Role picker: show this thread's role, or spawn explore/contribute/plan/review (the spawn tool, for providers without BB plugin tools such as GitHub Copilot)",
+    summary: "Role picker: show this thread's role, spawn explore/contribute/plan/review (the spawn tool), or ask the user with a question card (AskUserQuestion); for providers without BB plugin tools such as GitHub Copilot",
     commands: [
       { name: "show", summary: "Print this thread's role and its procedure (same as role_choice)", usage: "bb roles show" },
       {
         name: "spawn",
         summary: "Spawn explore, contribute, plan, or review from this thread (same as the spawn tool)",
         usage: "bb roles spawn <explore|contribute|plan|review> (--assignment <text> | --assignment-file <path>) [--worker <thr_id>]",
+      },
+      {
+        name: "ask",
+        summary: "Ask the user with a question card and wait for the answer (AskUserQuestion, for providers without BB plugin tools such as GitHub Copilot). Prints {\"answers\":[{question,header,selected,freeText?}]}; exit 2 when the card is dismissed or times out (30 min)",
+        usage: "bb roles ask (--questions '<single-line JSON>' | --questions-file <path>); JSON as AskUserQuestion: {\"questions\":[{\"question\",\"header\" (<=12 chars),\"options\":[{\"label\",\"description\",\"preview\"?}] (2-4),\"multiSelect\"?}] (1-10)}",
       },
     ],
     async run(argv, cli) {
@@ -502,7 +543,48 @@ export default async function plugin(bb: BbPluginApi) {
         const thread = await bb.sdk.threads.get({ threadId });
         return { exitCode: 0, stdout: `${procedure(thread.providerId, found.role)} Source: ${found.source}. ${APPLIES}\n` };
       }
-      if (command !== "spawn") return fail("Usage: bb roles show | bb roles spawn <explore|contribute|plan|review> (--assignment <text> | --assignment-file <path>) [--worker <thr_id>]", 2);
+      if (command === "ask") {
+        const options: Record<string, string> = {};
+        for (let i = 0; i < rest.length; i++) {
+          const match = /^--(questions|questions-file)(?:=(.*))?$/s.exec(rest[i]);
+          if (!match) return fail(`Unknown argument "${rest[i]}". Use --questions '<json>' or --questions-file <path>.`);
+          const value = match[2] ?? rest[++i];
+          if (value === undefined) return fail(`--${match[1]} needs a value.`);
+          options[match[1]] = value;
+        }
+        if ((options.questions === undefined) === (options["questions-file"] === undefined)) {
+          return fail(`bb roles ask needs exactly one of --questions '<json>' or --questions-file <path>. ${ASK_SCHEMA_HINT}`);
+        }
+        let raw = options.questions;
+        if (options["questions-file"] !== undefined) {
+          const file = await readInvokerFile(threadId, cli.cwd, options["questions-file"]);
+          if (!file.ok) return fail(file.error);
+          raw = file.text;
+        }
+        const parsed = parseAskInput(raw ?? "");
+        if (!parsed.ok) return fail(`${parsed.error}\nFix the questions and run bb roles ask again.`);
+        const payload = buildAskPayload(parsed.input);
+        let result: PluginInteractionResult;
+        try {
+          result = await bb.ui.requestInput(
+            {
+              threadId,
+              rendererId: ASK_RENDERER_ID,
+              title: askTitle(parsed.input),
+              payload,
+              timeoutMs: ASK_TIMEOUT_MS,
+              presentation: { label: { pending: "Asking a question", completed: "Asked" }, icon: { glyph: "MessageQuestion" } },
+              describeSubmission: (value) => describeAsk(askAnswers(payload, value)),
+            },
+            { signal: cli.signal },
+          );
+        } catch (error) {
+          return fail(`Could not show the question card: ${error instanceof Error ? error.message : String(error)}. Ask the question in chat instead and end your turn.`, 2);
+        }
+        if (result.outcome === "cancelled") return { exitCode: 2, stderr: askCancelledMessage(result.reason) };
+        return { exitCode: 0, stdout: formatAskOutput(askAnswers(payload, result.value)) };
+      }
+      if (command !== "spawn") return fail("Usage: bb roles show | bb roles spawn <explore|contribute|plan|review> (--assignment <text> | --assignment-file <path>) [--worker <thr_id>] | bb roles ask (--questions '<json>' | --questions-file <path>)", 2);
       const parsedName = spawnName.safeParse(rest[0]);
       if (!parsedName.success) return fail(`bb roles spawn needs a name: explore, contribute, plan, or review. Got "${rest[0] ?? ""}".`, 2);
       const options: Record<string, string> = {};
@@ -518,20 +600,9 @@ export default async function plugin(bb: BbPluginApi) {
       }
       let assignment = options.assignment;
       if (options["assignment-file"] !== undefined) {
-        // The path is on the invoking thread's machine, not necessarily the server's.
-        const thread = await bb.sdk.threads.get({ threadId });
-        const hostId = thread.environmentId
-          ? (await bb.sdk.environments.get({ environmentId: thread.environmentId })).hostId
-          : undefined;
-        const filePath = options["assignment-file"];
-        const absolute = /^([a-zA-Z]:[\\/]|[\\/])/.test(filePath) || !cli.cwd ? filePath : path.join(cli.cwd, filePath);
-        try {
-          const file = await bb.sdk.files.read({ path: absolute, ...(hostId ? { hostId } : {}) });
-          if (!("content" in file)) return fail(`Could not read ${absolute}.`);
-          assignment = file.contentEncoding === "base64" ? Buffer.from(file.content, "base64").toString("utf8") : file.content;
-        } catch (error) {
-          return fail(`Could not read ${absolute}: ${error instanceof Error ? error.message : String(error)}`);
-        }
+        const file = await readInvokerFile(threadId, cli.cwd, options["assignment-file"]);
+        if (!file.ok) return fail(file.error);
+        assignment = file.text;
       }
       if (!assignment?.trim()) return fail("bb roles spawn needs a non-empty --assignment or --assignment-file.", 2);
       const result = await spawnAgent(threadId, {

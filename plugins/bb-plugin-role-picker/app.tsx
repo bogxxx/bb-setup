@@ -1,8 +1,14 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { definePluginApp, useComposer, useRpc } from "@get-bb/plugin-sdk/app";
+import { definePluginApp, useComposer, useRpc, type PluginPendingInteractionProps } from "@get-bb/plugin-sdk/app";
+import { Button } from "./components/ui/button";
+import { QuestionForm } from "./components/ui/question-form";
+import type { Question } from "./components/ui/question-form-state";
 import type { Role, rpcContract } from "./server";
 import "./composer-footer.css";
+
+// The rendererId bb roles ask passes to bb.ui.requestInput (ASK_RENDERER_ID in lib/ask.ts).
+const ASK_RENDERER_ID = "ask";
 
 const ROLE_OPTIONS: { value: Role; label: string }[] = [
   { value: "regular", label: "Regular" },
@@ -159,9 +165,45 @@ function ComposerRole() {
   );
 }
 
+function questionsOf(payload: unknown): Question[] | null {
+  const questions = payload && typeof payload === "object" ? (payload as { questions?: unknown }).questions : undefined;
+  return Array.isArray(questions) && questions.length > 0 ? (questions as Question[]) : null;
+}
+
+// The question card bb roles ask opens: the same form as the builtin AskUserQuestion card.
+function AskInteraction({ interaction, submit, cancel }: PluginPendingInteractionProps) {
+  const questions = useMemo(() => questionsOf(interaction.payload), [interaction.payload]);
+  const [busy, setBusy] = useState(false);
+  if (!questions) {
+    return (
+      <div className="space-y-3">
+        <p className="text-sm text-muted-foreground">This question could not be displayed.</p>
+        <Button type="button" variant="outline" onClick={() => void cancel().catch(() => {})}>
+          Cancel
+        </Button>
+      </div>
+    );
+  }
+  return (
+    <QuestionForm
+      key={interaction.id}
+      draftKey={`${interaction.threadId}:${interaction.id}`}
+      questions={questions}
+      disabled={busy}
+      cancelDisabled={busy}
+      onSubmit={(answers) => {
+        setBusy(true);
+        return submit({ answers }).finally(() => setBusy(false));
+      }}
+      onCancel={cancel}
+    />
+  );
+}
+
 export default definePluginApp((app) => {
   app.composer.customize({
     id: "role",
     actions: [{ id: "role", component: ComposerRole }],
   });
+  app.slots.pendingInteraction({ id: ASK_RENDERER_ID, component: AskInteraction });
 });

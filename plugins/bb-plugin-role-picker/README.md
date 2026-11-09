@@ -16,6 +16,27 @@ A BB plugin that keeps a todo list. It shows every surface a plugin can own:
 Try it: install the plugin, open **Example todos** in the sidebar, then run
 `bb role-picker add "Ship it"` in a terminal. The page updates at once.
 
+## Ask the user: `bb roles ask`
+
+`bb roles ask` (also `bb plugin run role-picker ask`) opens a question card in
+the calling thread and blocks until the user answers, cancels, or 30 minutes
+pass. It exists for GitHub Copilot, which has no question tool in bb: it does
+not load BB plugin tools such as `AskUserQuestion`, and its own `ask_user` is
+not offered over ACP. Input is the `AskUserQuestion` schema as single-line JSON
+(`--questions '<json>'`) or a file on the thread's machine
+(`--questions-file <path>`):
+
+```
+bb roles ask --questions '{"questions":[{"question":"Which database?","header":"Database","options":[{"label":"Postgres","description":"Already in the stack"},{"label":"SQLite","description":"No server"}]}]}'
+```
+
+It prints `{"answers":[{"question","header","selected":[...],"freeText"?}]}`
+and exits 0; exits 1 on invalid input (every problem on stderr) or outside a bb
+thread; exits 2 when there is no answer (the card was dismissed, timed out, or could not be shown). The backend is the
+`ask` command in `server.ts` (pure parts in `lib/ask.ts`); the card is the
+`ask` `pendingInteraction` in `app.tsx`, which renders the vendored
+`@bb/question-form` component (`components/ui/question-form*.ts*`).
+
 ## UI components
 
 `components/ui/` is vendored source you own (the shadcn model): edit the
