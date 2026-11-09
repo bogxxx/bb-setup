@@ -1,6 +1,7 @@
 ---
 name: copilot-troubleshoot
-description: Troubleshoot and fix GitHub Copilot in bb on macOS (Windows equivalents noted). Use when Copilot threads fail, the model picker shows "Could not load model(s) for GitHub Copilot", the copilot CLI is missing or broken, copilot-acp is missing or dangling, a preToolUse hook fails closed with exit 127 so every tool is denied, a Copilot agent pin is unavailable and falls back to another model, or attachments fail with "Refusing to fetch project attachment over insecure server URL: http://…" because the bb server URL is plain HTTP.
+description: >-
+  Troubleshoot and fix GitHub Copilot in bb on macOS (Windows equivalents noted). Use when Copilot threads fail, the model picker shows "Could not load model(s) for GitHub Copilot", the copilot CLI is missing or broken, copilot-acp is missing or dangling, a preToolUse hook fails closed with exit 127 so every tool is denied, a Copilot agent pin is unavailable and falls back to another model, or attachments fail with "Refusing to fetch project attachment over insecure server URL: http://…" because the bb server URL is plain HTTP.
 ---
 
 # Troubleshoot GitHub Copilot in bb
@@ -173,7 +174,9 @@ Files in `~/src/bb-setup/skills/copilot-troubleshoot/assets/`: `bb-loopback-forw
 Install the forwarder (macOS):
 
 1. Fill in the template: `sed -e 's/__SERVER_IP__/<server-ip>/g' -e 's/__PORT__/<port>/g' ~/src/bb-setup/skills/copilot-troubleshoot/assets/bb-loopback-forward.py > "$HOME/Library/Application Support/bb-loopback/forward.py"` (create the directory first).
-2. Write the plist with the label, forwarder and log paths filled in, to `~/Library/LaunchAgents/<label>.plist`, then `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/<label>.plist`.
+2. Write the plist with the label, forwarder and log paths filled in. launchd does not expand `~` or `$HOME` inside plist strings, so the shell must expand them before the XML is written. Use double quotes so the shell expands `$HOME`, and check the result has no `~` or `$`:
+   `LABEL=com.<name>.bb-loopback; sed -e "s|__LABEL__|$LABEL|g" -e "s|__FORWARDER__|$HOME/Library/Application Support/bb-loopback/forward.py|g" -e "s|__LOG__|$HOME/Library/Logs/bb-loopback.log|g" ~/src/bb-setup/skills/copilot-troubleshoot/assets/com.bb-loopback.plist.template > "$HOME/Library/LaunchAgents/$LABEL.plist"`
+   Then `grep -n '<string>[^<]*[~$]' "$HOME/Library/LaunchAgents/$LABEL.plist"` must print nothing (no `~` or `$` left in a path), and `plutil -lint "$HOME/Library/LaunchAgents/$LABEL.plist"` must print `OK`. Any `&`, `<` or `>` in a path must be written as `&amp;`, `&lt;` or `&gt;` in the XML, and as `\&` in a sed replacement; the default paths need neither. Load it with `launchctl bootstrap gui/$(id -u) "$HOME/Library/LaunchAgents/$LABEL.plist"`.
 3. Check: `launchctl print gui/$(id -u)/<label>` shows `state = running`, and `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:<port>/` returns the same code as `http://<server-ip>:<port>/`.
 
 New Mac: install the forwarder first, then enroll with `http://127.0.0.1:<port>` as the server URL. Untested: the enrollment command comes from the app and was not run against a loopback URL yet. If the installer insists on the public host, enroll as usual and switch afterwards with the steps below. The enrollment steps are in the `onboard-bb-machine` skill.
@@ -183,12 +186,15 @@ Switch an enrolled daemon (macOS). Confirm the forwarder answers first; otherwis
 1. Back up `~/.bb-machines/<server-dir>/config.json` and the daemon plist `~/Library/LaunchAgents/app.getbb.host-daemon.<dir-with-dashes>-<hostId>.plist` (the `<dir-with-dashes>` is the data dir name with dots turned into dashes, for example `100-116-88-55-38886`).
 2. In `config.json`, set `"serverUrl": "http://127.0.0.1:<port>"`.
 3. In the plist, set the argument after `--server-url` (find its index with `plutil -p`; it is `ProgramArguments` item 7 in our file): `/usr/libexec/PlistBuddy -c "Set :ProgramArguments:7 http://127.0.0.1:<port>" <plist>`. The flag takes precedence over `config.json`, so both must change.
-4. Restart the daemon from a detached job, never from a bb thread: restarting it kills every bb thread on the machine. Put the restart in a script, for example `launchctl bootout gui/$(id -u)/<daemon-label>; launchctl bootstrap gui/$(id -u) <plist>`, and run it with `launchctl submit -l <job-label> -- /bin/bash <script>`. Remove the job when it has run (`launchctl remove <job-label>`). In our attempt the submitted job re-ran about every 10 seconds until it was removed, so do not leave it submitted.
+4. Restart the daemon only with the user's permission, and never from a bb thread: the restart kills every bb thread on the machine, including the one doing the work. Do not use `launchctl submit`; it re-ran about every 10 seconds in our attempt and nothing stopped it. Use a one-shot LaunchAgent instead, which launchd runs outside the bb process tree, once, with nothing that depends on the calling thread:
+   a. Write the restart script to `$HOME/Library/Application Support/bb-loopback/switch-restart.sh` with absolute paths. First it checks the guard: if the daemon's `config.json` already has `"serverUrl": "http://127.0.0.1:<port>"`, it does nothing more. Otherwise it runs `launchctl bootout gui/$(id -u)/<daemon-label>`, then `launchctl bootstrap gui/$(id -u) <daemon-plist>`. Its last two lines are `rm -f <job-plist>` and `launchctl bootout gui/$(id -u)/<job-label>`, which unload the job itself.
+   b. Write `$HOME/Library/LaunchAgents/<job-label>.plist` with `Label`, `ProgramArguments` (`/bin/bash` and the absolute script path), `RunAtLoad` true, and `KeepAlive` false. Do not add `StartInterval`.
+   c. `launchctl bootstrap gui/$(id -u) "$HOME/Library/LaunchAgents/<job-label>.plist"`. RunAtLoad runs the script once. The guard makes a second run a no-op.
 5. Verify: `logs/host-daemon.1.log` has `Connected to server` with `"serverUrl":"http://127.0.0.1:<port>"`, and a pasted image in a thread loads.
 
 Verify: `launchctl print gui/$(id -u)/<label>` shows `state = running`; the switch checks above pass; a pasted image in a thread loads.
 
-Rollback: stop the daemon the same way, restore the two backed-up files (or set `serverUrl` and the `--server-url` argument back to `http://<server-ip>:<port>`), and bootstrap the daemon again. The tailnet URL keeps chats working; only attachments and self-update fail on it. Unload the forwarder with `launchctl bootout gui/$(id -u)/<label>` when no machine uses it.
+Rollback: run it the same way as step 4, from a one-shot LaunchAgent, never from a bb thread. Its script restores the two backed-up files (or sets `serverUrl` and the `--server-url` argument back to `http://<server-ip>:<port>`), with the guard inverted so it does nothing when the tailnet URL is already set. Then it boots the daemon out and in again and removes its own job. The tailnet URL keeps chats working; only attachments and self-update fail on it. Unload the forwarder with `launchctl bootout gui/$(id -u)/<label>` when no machine uses it.
 
 Dead ends, so nobody retries them:
 
