@@ -12,6 +12,7 @@ Companion to [ai-agents-setup](https://github.com/bogxxx/ai-agents-setup), which
 | `plugins/bb-plugin-claude-subagents` | Subagents panel and `bb claude-subagents` | bb runs it from here (`path:` source) |
 | `skills/provider-orchestration` | User skill that routes work to role agents | junction from `~/.bb/skills/provider-orchestration` |
 | `skills/onboard-bb-machine` | User skill that enrolls a new machine with the bb server, sets up Copilot and the desktop app, and checks that chats work | junction from `~/.bb/skills/onboard-bb-machine` |
+| `skills/copilot-troubleshoot` | User skill that diagnoses and fixes GitHub Copilot in bb (CLI, copilot-acp launcher, model list, fail-closed hooks, model pins); `scripts/check.sh` runs the read-only checks | junction from `~/.bb/skills/copilot-troubleshoot` |
 | `claude/agents/` | Claude Code `orchestrator`, `explorer`, `planner`, `worker` | junction from `~/.claude/agents` |
 | `claude/CLAUDE.md` | Global Claude Code instructions | copied to and from `~/.claude/CLAUDE.md` |
 | `bb/AGENTS.md` | Instructions bb adds to every thread | copied to and from `~/.bb/AGENTS.md` |
