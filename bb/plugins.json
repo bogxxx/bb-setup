@@ -28,6 +28,12 @@
       "subdirectory": "plugins/bb-plugin-claude-subagents"
     },
     {
+      "id": "loom",
+      "source": "git:https://github.com/kalindudc/bb-marketplace.git@semver:loom/:>=0.1.0 <1.0.0",
+      "enabled": true,
+      "subdirectory": "plugins/loom"
+    },
+    {
       "id": "role-picker",
       "source": "https://github.com/bogxxx/bb-setup.git",
       "enabled": true,
@@ -68,7 +74,7 @@
     "provider-acp": true,
     "provider-claude-code": true,
     "provider-codex": true,
-    "provider-pi": true,
+    "provider-pi": false,
     "provider-retry": true,
     "push-notifications": true,
     "scheduled-send": true,
