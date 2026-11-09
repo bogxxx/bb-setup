@@ -19,18 +19,31 @@ Prompt generator means interview the user and write a prompt for an Orchestrator
 
 The provider and model menu does not list these roles. The Role control in the composer does. A running session keeps the instructions it started with until BB builds that provider session again.
 
-## Asking the user from the terminal: `bb roles ask`
+## Asking the user from the terminal: `bb plugin run role-picker ask`
 
-GitHub Copilot has no question tool in bb: `AskUserQuestion` is a BB plugin tool, and Copilot's own `ask_user` is not offered to bb. `bb roles ask` (or `bb plugin run role-picker ask`) opens the same question card in the thread and blocks until the user answers, cancels, or 30 minutes pass.
+GitHub Copilot has no question tool in bb: `AskUserQuestion` is a BB plugin tool, and Copilot's own `ask_user` is not offered to bb. `bb plugin run role-picker ask` (shorthand `bb roles ask`) opens the same question card in the thread and blocks until the user answers, cancels, or 30 minutes pass.
 
+Pipe the JSON on stdin with `--questions-stdin`, so no shell quoting touches it (apostrophes, `"`, `&`, `|` pass through). bash on macOS/Linux, a quoted heredoc:
+
+```bash
+bb plugin run role-picker ask --questions-stdin <<'EOF'
+{"questions":[{"question":"Which database?","header":"Database","options":[{"label":"Postgres (recommended)","description":"Already in the stack"},{"label":"SQLite","description":"No server"}]}]}
+EOF
 ```
-bb roles ask --questions '{"questions":[{"question":"Which database?","header":"Database","options":[{"label":"Postgres (recommended)","description":"Already in the stack"},{"label":"SQLite","description":"No server"}]}]}'
-bb roles ask --questions-file <path>
+
+PowerShell on Windows, a single-quoted here-string (`@'` ends its line, `'@` starts its line):
+
+```powershell
+@'
+{"questions":[{"question":"Which database?","header":"Database","options":[{"label":"Postgres (recommended)","description":"Already in the stack"},{"label":"SQLite","description":"No server"}]}]}
+'@ | bb plugin run role-picker ask --questions-stdin
 ```
 
-- Input: the `AskUserQuestion` schema. 1-10 questions; each has `question`, `header` (at most 12 characters), 2-4 `options` of `{label, description, preview?}` with unique labels, and optional `multiSelect` (default false). `--questions` takes single-line JSON; use `--questions-file` (a path on the thread's machine) for longer input. The card always offers a free-text answer.
+- Input: the `AskUserQuestion` schema. 1-10 questions; each has `question`, `header` (at most 12 characters), 2-4 `options` of `{label, description, preview?}` with unique labels, and optional `multiSelect` (default false). The card always offers a free-text answer.
+- Exactly one input source: `--questions-stdin` (one non-empty line of JSON, at most 16 KiB), `--questions '<json>'` (inline; an apostrophe breaks it in bash, and Windows PowerShell strips its `"` and cmd.exe breaks on `& | < > ^`, so avoid it), or `--questions-file <path>` (a file on the thread's machine; not for read-only roles).
 - Output, exit 0: `{"answers":[{"question","header","selected":["<label>",...],"freeText"?}]}` on stdout, one entry per question in order.
 - Exit 1: invalid input or no bb thread (`BB_THREAD_ID` unset); stderr lists every problem. Fix the JSON and run it again.
 - Exit 2: no answer. The user dismissed the card, it timed out or was interrupted, or it could not be shown; stderr says why. Ask the question in chat instead and end the turn.
-- Run it in a shell that waits: for Copilot, bash in sync mode with a long `initial_wait` (e.g. 600), then `read_bash` until it finishes.
-- If the answers JSON was printed, use it whatever the exit code. On Windows the `bb roles` shorthand can crash at exit with a non-zero code after it worked, so prefer `bb plugin run role-picker ask` there.
+- Run it in a shell that waits: for Copilot, bash (macOS/Linux) or powershell (Windows) in sync mode with a long `initial_wait` (600), then `read_bash` or `read_powershell` until it finishes.
+- If the answers JSON was printed, use it whatever the exit code. Use `bb plugin run role-picker ask` on Windows: the `bb roles` shorthand can crash at exit there with a non-zero code after it worked.
+- Windows PowerShell 5.1 pipes ASCII to native commands by default, so non-ASCII text arrives as `?`; set `$OutputEncoding = [Text.UTF8Encoding]::new($false)` first there. PowerShell 7 pipes UTF-8.

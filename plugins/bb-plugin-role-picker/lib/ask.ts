@@ -45,7 +45,32 @@ export type AskPayload = {
 export const ASK_SCHEMA_HINT =
   'Expected {"questions":[{"question":"...?","header":"<=12 chars","options":[{"label":"...","description":"..."}, ...2-4],"multiSelect":false}, ...1-10]}.';
 
-/** The --questions JSON parsed and checked against the AskUserQuestion schema, or every problem found. */
+export type AskSource = { kind: "inline"; json: string } | { kind: "file"; path: string };
+
+/**
+ * The ask arguments as one input source. The bb CLI rewrites --questions-stdin to --questions <stdin line>
+ * before the plugin runs, so the plugin only sees --questions-stdin from a bb CLI without that rewrite.
+ */
+export function parseAskArgs(args: string[]): { ok: true; source: AskSource } | { ok: false; error: string } {
+  const options: Record<string, string> = {};
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--questions-stdin") {
+      return { ok: false, error: "--questions-stdin reached the plugin unread: this bb CLI does not pipe stdin to plugin options. Update bb, or use --questions-file <path>." };
+    }
+    const match = /^--(questions|questions-file)(?:=(.*))?$/s.exec(args[i]);
+    if (!match) return { ok: false, error: `Unknown argument "${args[i]}". Use --questions-stdin (JSON on stdin), --questions '<json>', or --questions-file <path>.` };
+    const value = match[2] ?? args[++i];
+    if (value === undefined) return { ok: false, error: `--${match[1]} needs a value.` };
+    if (options[match[1]] !== undefined) return { ok: false, error: `--${match[1]} was given twice.` };
+    options[match[1]] = value;
+  }
+  if ((options.questions === undefined) === (options["questions-file"] === undefined)) {
+    return { ok: false, error: `bb roles ask needs exactly one of --questions-stdin (JSON on stdin), --questions '<json>', or --questions-file <path>. ${ASK_SCHEMA_HINT}` };
+  }
+  return options.questions !== undefined ? { ok: true, source: { kind: "inline", json: options.questions } } : { ok: true, source: { kind: "file", path: options["questions-file"] } };
+}
+
+/** The questions JSON parsed and checked against the AskUserQuestion schema, or every problem found. */
 export function parseAskInput(raw: string): { ok: true; input: AskInput } | { ok: false; error: string } {
   let json: unknown;
   try {

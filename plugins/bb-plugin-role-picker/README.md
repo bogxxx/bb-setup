@@ -22,12 +22,22 @@ Try it: install the plugin, open **Example todos** in the sidebar, then run
 the calling thread and blocks until the user answers, cancels, or 30 minutes
 pass. It exists for GitHub Copilot, which has no question tool in bb: it does
 not load BB plugin tools such as `AskUserQuestion`, and its own `ask_user` is
-not offered over ACP. Input is the `AskUserQuestion` schema as single-line JSON
-(`--questions '<json>'`) or a file on the thread's machine
-(`--questions-file <path>`):
+not offered over ACP. Input is the `AskUserQuestion` schema as one line of JSON
+piped on stdin (`--questions-stdin`; the bb CLI passes it as `--questions`, so
+no shell quoting touches it), inline (`--questions '<json>'`), or a file on the
+thread's machine (`--questions-file <path>`). Agents use stdin: a quoted heredoc
+in bash, a single-quoted here-string in PowerShell:
 
+```bash
+bb plugin run role-picker ask --questions-stdin <<'EOF'
+{"questions":[{"question":"Which database?","header":"Database","options":[{"label":"Postgres","description":"Already in the stack"},{"label":"SQLite","description":"No server"}]}]}
+EOF
 ```
-bb roles ask --questions '{"questions":[{"question":"Which database?","header":"Database","options":[{"label":"Postgres","description":"Already in the stack"},{"label":"SQLite","description":"No server"}]}]}'
+
+```powershell
+@'
+{"questions":[{"question":"Which database?","header":"Database","options":[{"label":"Postgres","description":"Already in the stack"},{"label":"SQLite","description":"No server"}]}]}
+'@ | bb plugin run role-picker ask --questions-stdin
 ```
 
 It prints `{"answers":[{"question","header","selected":[...],"freeText"?}]}`

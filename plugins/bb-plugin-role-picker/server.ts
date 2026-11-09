@@ -6,7 +6,6 @@ import { z } from "zod";
 import { SHIPPED_AGENTS } from "./agents.generated.js";
 import {
   ASK_RENDERER_ID,
-  ASK_SCHEMA_HINT,
   ASK_TIMEOUT_MS,
   askAnswers,
   askCancelledMessage,
@@ -14,6 +13,7 @@ import {
   buildAskPayload,
   describeAsk,
   formatAskOutput,
+  parseAskArgs,
   parseAskInput,
 } from "./lib/ask.js";
 import { parseQuotaBlock, quotaBlockEnd, type QuotaBlock } from "./lib/quota-block.js";
@@ -249,7 +249,7 @@ const INTERVIEWER_ASK_TOOL =
 // GitHub Copilot has no question tool in bb (no plugin tools, no ask_user in ACP), so it asks
 // through the CLI, which opens the same card.
 const INTERVIEWER_ASK_CLI =
-  "Ask with bb roles ask --questions '<single-line JSON>' (the same schema as AskUserQuestion: {\"questions\":[{\"question\",\"header\" (at most 12 chars),\"options\":[{\"label\",\"description\"}] (2-4),\"multiSelect\":false}]}), one question at a time, or at most three independent ones in one call. Run it with bash in sync mode with a long initial_wait (e.g. 600) and keep calling read_bash until it finishes: it shows the question card and blocks until the user answers, then prints the answers as JSON. Never put a wall of questions in chat. Give 2-4 concrete options, put the one you recommend first and mark it, and let the user write their own answer. If it printed the answers JSON, use them whatever the exit code. If it exits 1 with an input error, fix the JSON and run it again. If it exits non-zero otherwise (the user dismissed the card or it timed out), ask that one question in your reply and end the turn.";
+  "Ask with bb plugin run role-picker ask --questions-stdin, piping the questions as one line of JSON (the same schema as AskUserQuestion: {\"questions\":[{\"question\",\"header\" (at most 12 chars),\"options\":[{\"label\",\"description\"}] (2-4),\"multiSelect\":false}]}), one question at a time, or at most three independent ones in one call. Never put the JSON inside shell quotes. On macOS/Linux use bash with a quoted heredoc, three lines: bb plugin run role-picker ask --questions-stdin <<'EOF', then the JSON, then EOF. On Windows use powershell with a single-quoted here-string, three lines: @', then the JSON, then '@ | bb plugin run role-picker ask --questions-stdin. Run it in sync mode with a long initial_wait (600) and keep calling read_bash (read_powershell on Windows) until it finishes: it shows the question card and blocks until the user answers, then prints the answers as JSON. Never put a wall of questions in chat. Give 2-4 concrete options, put the one you recommend first and mark it, and let the user write their own answer. If it printed the answers JSON, use them whatever the exit code. If it exits 1 with an input error, fix the JSON and run it again. Otherwise, with no answers (the user dismissed the card or it timed out), ask that one question in your reply and end the turn.";
 
 const INTERVIEWER_PROCEDURE = (ask: string) => [
   "Role: prompt generator. You work like a business analyst: you turn the user's idea into a prompt for an Orchestrator thread. You do not do the work.",
@@ -530,7 +530,7 @@ export default async function plugin(bb: BbPluginApi) {
       {
         name: "ask",
         summary: "Ask the user with a question card and wait for the answer (AskUserQuestion, for providers without BB plugin tools such as GitHub Copilot). Prints {\"answers\":[{question,header,selected,freeText?}]}; exit 2 when the card is dismissed or times out (30 min)",
-        usage: "bb roles ask (--questions '<single-line JSON>' | --questions-file <path>); JSON as AskUserQuestion: {\"questions\":[{\"question\",\"header\" (<=12 chars),\"options\":[{\"label\",\"description\",\"preview\"?}] (2-4),\"multiSelect\"?}] (1-10)}",
+        usage: "bb roles ask (--questions-stdin | --questions '<json>' | --questions-file <path>); --questions-stdin reads one line of JSON from stdin (no shell quoting: bash <<'EOF' heredoc, PowerShell @' '@ here-string piped in); JSON as AskUserQuestion: {\"questions\":[{\"question\",\"header\" (<=12 chars),\"options\":[{\"label\",\"description\",\"preview\"?}] (2-4),\"multiSelect\"?}] (1-10)}",
       },
     ],
     async run(argv, cli) {
@@ -544,24 +544,17 @@ export default async function plugin(bb: BbPluginApi) {
         return { exitCode: 0, stdout: `${procedure(thread.providerId, found.role)} Source: ${found.source}. ${APPLIES}\n` };
       }
       if (command === "ask") {
-        const options: Record<string, string> = {};
-        for (let i = 0; i < rest.length; i++) {
-          const match = /^--(questions|questions-file)(?:=(.*))?$/s.exec(rest[i]);
-          if (!match) return fail(`Unknown argument "${rest[i]}". Use --questions '<json>' or --questions-file <path>.`);
-          const value = match[2] ?? rest[++i];
-          if (value === undefined) return fail(`--${match[1]} needs a value.`);
-          options[match[1]] = value;
-        }
-        if ((options.questions === undefined) === (options["questions-file"] === undefined)) {
-          return fail(`bb roles ask needs exactly one of --questions '<json>' or --questions-file <path>. ${ASK_SCHEMA_HINT}`);
-        }
-        let raw = options.questions;
-        if (options["questions-file"] !== undefined) {
-          const file = await readInvokerFile(threadId, cli.cwd, options["questions-file"]);
+        const args = parseAskArgs(rest);
+        if (!args.ok) return fail(args.error);
+        let raw: string;
+        if (args.source.kind === "file") {
+          const file = await readInvokerFile(threadId, cli.cwd, args.source.path);
           if (!file.ok) return fail(file.error);
           raw = file.text;
+        } else {
+          raw = args.source.json;
         }
-        const parsed = parseAskInput(raw ?? "");
+        const parsed = parseAskInput(raw);
         if (!parsed.ok) return fail(`${parsed.error}\nFix the questions and run bb roles ask again.`);
         const payload = buildAskPayload(parsed.input);
         let result: PluginInteractionResult;
@@ -584,7 +577,7 @@ export default async function plugin(bb: BbPluginApi) {
         if (result.outcome === "cancelled") return { exitCode: 2, stderr: askCancelledMessage(result.reason) };
         return { exitCode: 0, stdout: formatAskOutput(askAnswers(payload, result.value)) };
       }
-      if (command !== "spawn") return fail("Usage: bb roles show | bb roles spawn <explore|contribute|plan|review> (--assignment <text> | --assignment-file <path>) [--worker <thr_id>] | bb roles ask (--questions '<json>' | --questions-file <path>)", 2);
+      if (command !== "spawn") return fail("Usage: bb roles show | bb roles spawn <explore|contribute|plan|review> (--assignment <text> | --assignment-file <path>) [--worker <thr_id>] | bb roles ask (--questions-stdin | --questions '<json>' | --questions-file <path>)", 2);
       const parsedName = spawnName.safeParse(rest[0]);
       if (!parsedName.success) return fail(`bb roles spawn needs a name: explore, contribute, plan, or review. Got "${rest[0] ?? ""}".`, 2);
       const options: Record<string, string> = {};

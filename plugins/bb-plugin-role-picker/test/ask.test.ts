@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { askAnswers, askCancelledMessage, askTitle, buildAskPayload, describeAsk, formatAskOutput, parseAskInput } from "../lib/ask";
+import { askAnswers, askCancelledMessage, askTitle, buildAskPayload, describeAsk, formatAskOutput, parseAskArgs, parseAskInput } from "../lib/ask";
 
 const option = (label: string) => ({ label, description: `${label} description` });
 const question = (overrides: Record<string, unknown> = {}) => ({
@@ -154,5 +154,39 @@ describe("answers", () => {
     const message = askCancelledMessage("timeout");
     expect(message).toContain("reason: timeout");
     expect(message).toContain("Ask the question in chat");
+  });
+});
+
+describe("parseAskArgs", () => {
+  const json = raw([question({ question: "What's A & B? \"x\" | <y> ^z" })]);
+
+  function argsError(args: string[]): string {
+    const result = parseAskArgs(args);
+    if (result.ok) throw new Error("expected an argument error");
+    return result.error;
+  }
+
+  test("takes the stdin line verbatim, as the bb CLI passes it (--questions-stdin becomes --questions <line>)", () => {
+    expect(parseAskArgs(["--questions", json])).toEqual({ ok: true, source: { kind: "inline", json } });
+    expect(parseAskArgs([`--questions=${json}`])).toEqual({ ok: true, source: { kind: "inline", json } });
+    const result = parseAskArgs(["--questions", json]);
+    if (!result.ok || result.source.kind !== "inline") throw new Error("expected inline JSON");
+    expect(parsed(JSON.parse(result.source.json).questions).questions[0].question).toBe("What's A & B? \"x\" | <y> ^z");
+  });
+
+  test("takes a questions file", () => {
+    expect(parseAskArgs(["--questions-file", "q.json"])).toEqual({ ok: true, source: { kind: "file", path: "q.json" } });
+  });
+
+  test("needs exactly one input source", () => {
+    expect(argsError([])).toContain("exactly one of --questions-stdin");
+    expect(argsError(["--questions", json, "--questions-file", "q.json"])).toContain("exactly one of --questions-stdin");
+    expect(argsError(["--questions", json, "--questions", json])).toContain("--questions was given twice");
+  });
+
+  test("reports --questions-stdin that the bb CLI did not read, and unknown or valueless options", () => {
+    expect(argsError(["--questions-stdin"])).toContain("does not pipe stdin");
+    expect(argsError(["--question", json])).toContain('Unknown argument "--question"');
+    expect(argsError(["--questions"])).toContain("--questions needs a value");
   });
 });
