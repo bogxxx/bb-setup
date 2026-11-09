@@ -1,6 +1,6 @@
 ---
 name: onboard-bb-machine
-description: Onboard a new Windows or macOS computer as a bb execution machine for the bogxxx.getbb.app server, with GitHub Copilot and the bb-setup repo, the desktop app pointed at the remote server, and a check that chats work. Use when the user asks to add, enroll, connect, set up or onboard a machine or host for bb, or pastes a bb enrollment command (X-BB-Enrollment / bbde_ token).
+description: Onboard a new Windows or macOS computer as a bb execution machine for the bogxxx.getbb.app server, with GitHub Copilot and the bb-setup repo, the desktop app pointed at the remote server, and a check that chats work. Also fixes an enrolled machine that bb shows as offline or disconnected while the computer is on (dead host daemon, WMI-blocked restart or autostart). Use when the user asks to add, enroll, connect, set up or onboard a machine or host for bb, pastes a bb enrollment command (X-BB-Enrollment / bbde_ token), or says bb shows their machine offline.
 ---
 
 # Onboard a new bb machine
@@ -44,7 +44,20 @@ $hostId = (Get-Content "$d\machine-service.json" -Raw | ConvertFrom-Json).hostId
 Start-Process (Get-Command node).Source -WindowStyle Hidden -WorkingDirectory $d -ArgumentList "`"$d\install-machine-windows.mjs`"", '--run', '--host-id', $hostId, '--data-dir', "`"$d`""
 ```
 
-Nothing restarts it after a reboot. Offer to add a Startup entry with the same command (for example a `.cmd` in `shell:startup` that runs `powershell -WindowStyle Hidden -Command "Start-Process ..."`).
+The installer registers autostart as the HKCU Run value `bb-host-daemon-bogxxx-getbb-app-<hostId>`. That value runs `install-machine-windows.mjs --start`, which goes through WMI again, so at every sign-in it fails silently and the machine stays offline. Rewrite the value to start `--run` directly, and only when the daemon port is not already listening. Back up the old value first:
+
+```powershell
+$d = "$env:USERPROFILE\.bb-machines\bogxxx.getbb.app"
+$svc = Get-Content "$d\machine-service.json" -Raw | ConvertFrom-Json
+$runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$name = "bb-host-daemon-bogxxx-getbb-app-$($svc.hostId)"
+$node = (Get-Command node).Source   # or the node.exe path in the existing value
+(Get-ItemProperty $runKey).$name | Set-Content "$d\run-key.backup.txt"
+$inner = "if(-not (Test-NetConnection 127.0.0.1 -Port $($svc.hostDaemonPort) -InformationLevel Quiet -WarningAction SilentlyContinue)){ Start-Process -WindowStyle Hidden -WorkingDirectory '$d' -FilePath '$node' -ArgumentList '`"$d\install-machine-windows.mjs`"','--run','--host-id','$($svc.hostId)','--data-dir','`"$d`"' }"
+Set-ItemProperty $runKey -Name $name -Value ('powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command "' + $inner.Replace('"','\"') + '"')
+```
+
+Test it while the daemon runs: `cmd /c (Get-ItemProperty $runKey).$name` must not start a second `bb-app.js host-daemon` process. A bb update or a reinstall may restore the WMI version of the value. Check it again after one.
 
 To restart the daemon (needed after PATH changes), stop the node processes whose command line matches `bb-machines|install-machine-windows|bb-host-daemon`, by PID, then start it again:
 
@@ -56,13 +69,25 @@ Before starting it again, reload PATH in the same shell (`$env:Path = [Environme
 
 Verify:
 
-- `<data>\logs\host-daemon.1.log` contains `Connected to server` and `Host daemon started`.
+- `(Invoke-WebRequest http://127.0.0.1:38888/status -UseBasicParsing).Content` returns this machine's `hostId` with `"connected":true`. This is the quickest check, and it needs no bb login.
+- The newest `<data>\logs\host-daemon.N.log` contains `Connected to server` and `Host daemon started`.
 - The daemon port (`<data>\host-daemon-port`, usually 38888) is listening.
 - In the bb web app (signed in), `fetch('/api/v1/hosts')` lists the machine's host id with `"status":"connected"`.
 
 The `bb` CLI under `<data>\npm\bb.cmd` returns `HTTP 401` on a machine that is only enrolled. The machine credential is not a user session. Verify through the app instead.
 
-`provider.list_models` errors in the daemon log for agents that are not installed (Codex, Claude Code, cursor-agent, agy, `copilot-acp-sopra`) are expected. They only matter for agents this machine should run.
+`provider.list_models` errors in the daemon log for agents that are not installed (Codex, Claude Code, cursor-agent, agy, `copilot-acp-sopra`) are expected. They only matter for agents this machine should run. Do not try to fix them, or disable those providers, as part of a connection problem.
+
+### Machine shows offline while the computer is on
+
+Threads are stored on the server, so they still look live in the app when this machine's daemon is down. Diagnose in this order (incident 2026-11-09):
+
+1. `Get-CimInstance Win32_Process -Filter "Name='node.exe'"` and look for `bb-app.js host-daemon` and `daemon-bundle.mjs`. If neither is there, the daemon and its supervisor are both dead. Before it died, the log showed a loop of `Disconnected from server` / `fetch failed`, then nothing more.
+2. Check that the server is reachable: `Invoke-WebRequest https://bogxxx.getbb.app` returning `401` is fine. A network error means a VPN or proxy problem, not a bb problem.
+3. `node "<data>\install-machine-windows.mjs" --start --host-id <hostId>` fails with `Windows refused to create the daemon process through WMI`. Confirm the block with `Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = 'cmd.exe /c exit 0' }`. `ReturnValue 2` means access denied, most likely a security policy that blocks process creation through WMI.
+4. Start the daemon with the `Start-Process ... --run` command above. Fix the Run value as well, then verify `/status` returns `"connected":true`.
+
+`bb machine list` from this machine returns `HTTP 401` or `Cannot connect to BB server`. That does not mean the machine is offline. Use `/status` and the logs instead.
 
 ## 4. GitHub Copilot CLI and sign-in
 
