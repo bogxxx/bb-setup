@@ -15,6 +15,15 @@ describe("procedure: how the prompt generator asks", () => {
     }
   });
 
+  test("Copilot orchestrator writes the assignment to a file and passes it with --assignment-file", () => {
+    for (const providerId of ["acp-github-copilot-cli", "acp-github-copilot-sopra"]) {
+      const text = procedure(providerId, "orchestrator");
+      expect(text).toContain('cat > "$BB_THREAD_STORAGE/');
+      expect(text).toContain("--assignment-file");
+      expect(text).not.toContain('--assignment "$(');
+    }
+  });
+
   test("other providers keep the AskUserQuestion tool", () => {
     for (const providerId of ["claude-code", "acp-cursor", "codex"]) {
       const text = procedure(providerId, "interviewer");

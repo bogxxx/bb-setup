@@ -16,6 +16,19 @@ A BB plugin that keeps a todo list. It shows every surface a plugin can own:
 Try it: install the plugin, open **Example todos** in the sidebar, then run
 `bb role-picker add "Ship it"` in a terminal. The page updates at once.
 
+## Spawn from the terminal: `bb plugin run role-picker spawn`
+
+Where the `spawn` tool is not loaded (GitHub Copilot), `bb plugin run role-picker spawn <explore|contribute|plan|review> --assignment-file <path> [--worker <thr_id>]` spawns the same agent. Write the assignment to a file first with a quoted heredoc (bash) or a single-quoted here-string (PowerShell), so the text needs no shell quoting:
+
+```bash
+cat > "$BB_THREAD_STORAGE/plan-a.md" <<'EOF'
+Plan the change. Findings: ...
+EOF
+bb plugin run role-picker spawn plan --assignment-file "$BB_THREAD_STORAGE/plan-a.md"
+```
+
+`--assignment <text>` takes one line. Do not use `--assignment "$(cat <<'EOF' ...)"`: bash 3.2 breaks on apostrophes in the text.
+
 ## Ask the user: `bb roles ask`
 
 `bb roles ask` (also `bb plugin run role-picker ask`) opens a question card in
