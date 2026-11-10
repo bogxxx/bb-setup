@@ -1373,10 +1373,10 @@ export function mergeMeasured(
       const lower = name.toLowerCase();
       return machineNames.has(lower) || (lower.includes("@") && machineNames.has(hostOf(lower)));
     };
-    const sameLogin = (a: TeamAccount) => !deviceLike(provider.name) && [a.name, a.label].some((name) => !deviceLike(name) && sameLoginName(provider.name, name));
-    const candidates = group.accounts.filter(
-      (a) => a.name === account.name || sameLogin(a) || (windows.length > 0 && !distinctEmailLogins(provider.name, a.name) && sameQuota(provider.plan, windows, a)),
-    );
+    // An account whose name or label is a different email is another login, whatever its local part or quota.
+    const otherEmail = (a: TeamAccount) => [a.name, a.label].some((name) => distinctEmailLogins(provider.name, name));
+    const sameLogin = (a: TeamAccount) => !deviceLike(provider.name) && !otherEmail(a) && [a.name, a.label].some((name) => !deviceLike(name) && sameLoginName(provider.name, name));
+    const candidates = group.accounts.filter((a) => a.name === account.name || sameLogin(a) || (windows.length > 0 && !otherEmail(a) && sameQuota(provider.plan, windows, a)));
     // The login wins over a machine name when both describe one quota.
     const existing = candidates.find((a) => !hosts.has(a.name.toLowerCase())) ?? candidates[0];
     if (existing === undefined) {

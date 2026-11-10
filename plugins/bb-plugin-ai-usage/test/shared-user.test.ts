@@ -146,6 +146,27 @@ describe("a bare login and its email are one account", () => {
     expect(matched.map((a) => a.name).sort()).toEqual(["krech", "krech@predator.local"]);
   });
 
+  test("an email label that differs from an incoming email keeps the incoming one its own row, whatever the numbers", () => {
+    const report = readReport(structuredClone(demoTeam));
+    mergeMeasured(report, { hostName: "host-a", user: SHARED_USER, providers: [claude("same", 10)] });
+    accountNamed(report, "claude", "same").label = "same@x.com";
+    mergeMeasured(report, { hostName: "host-b", user: SHARED_USER, providers: [claude("same@y.com", 10)] });
+    mergeMeasured(report, { hostName: "host-c", user: SHARED_USER, providers: [claude("same@y.com", 40)] }, { measuredAt: Date.now() - 3_600_000 });
+    const matched = rows(report, "claude").filter((a) => a.name.startsWith("same"));
+    expect(matched.map((a) => a.name).sort()).toEqual(["same", "same@y.com"]);
+    expect(accountNamed(report, "claude", "same").label).toBe("same@x.com");
+  });
+
+  test("an incoming email equal to the label still merges into the bare-named account", () => {
+    const report = readReport(structuredClone(demoTeam));
+    mergeMeasured(report, { hostName: "host-a", user: SHARED_USER, providers: [claude("same", 10)] });
+    accountNamed(report, "claude", "same").label = "same@x.com";
+    mergeMeasured(report, { hostName: "host-b", user: SHARED_USER, providers: [claude("same@x.com", 50)] }, { measuredAt: Date.now() - 3_600_000 });
+    const matched = rows(report, "claude").filter((a) => a.name.startsWith("same"));
+    expect(matched.map((a) => a.name)).toEqual(["same"]);
+    expect(matched[0]!.devices).toEqual(expect.arrayContaining(["host-a", "host-b"]));
+  });
+
   test("a hostname with the same quota as a login still folds into it", () => {
     const report = readReport(structuredClone(demoTeam));
     mergeMeasured(report, { hostName: "host-a", user: SHARED_USER, providers: [claude("krechko.bogdan@gmail.com", 10)] });
