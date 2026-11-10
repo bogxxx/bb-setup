@@ -104,7 +104,7 @@ Confirmed catalog ids, effort `medium`:
 | explorer | `claude-haiku-5-5` |
 | worker | `claude-haiku-5-5` |
 
-Opus and Haiku do not review Claude work. The review is Gemini 4 Argon (`gemini-4-argon` on Antigravity, provider `acp-antigravity`); when that is out of quota, Gemini 3.8 Flash (`gemini-3.8-flash` on Antigravity). It is `cantrip-review` when the session is Cursor.
+Opus and Haiku do not review Claude work. The review is Gemini 4 Argon (`gemini-4-argon` on Antigravity, provider `acp-antigravity`), with Gemini 3.8 Flash (`gemini-3.8-flash` on Antigravity) as a later step in the chain (see the order below). It is `cantrip-review` when the session is Cursor.
 
 Spawn the review with the `spawn` tool, name `review`, and `worker` set to the contribute thread id. The tool sets provider `acp-antigravity`, model `gemini-4-argon`, and reasoning level `medium`. It tries the reviewers in order (Argon, the Copilot `reviewer` on GPT 6.1 Sol, Gemini 3.8 Flash, then Cursor) and skips any model that is out of quota. Do not pass `--option agent=reviewer` (that is the Copilot persona, Opus 5.5), and do not run `bb thread spawn` for the review, because that skips the loop protocol. Allow at most two fix rounds (see Review loop).
 
