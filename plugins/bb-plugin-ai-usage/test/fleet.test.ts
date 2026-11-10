@@ -2,7 +2,7 @@
 // name when the id differs, and for machines that are offline), a stale
 // snapshot is marked with its time without a second account, and a report
 // read on the server adds no logins of its own.
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
 import { createRequire } from "node:module";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
@@ -10,7 +10,7 @@ import path from "node:path";
 import demoTeam from "../demo/team.json" with { type: "json" };
 import { fillMatrixFromBurn } from "../src/burn-matrix";
 import { machineInMatrix, mergeMeasured } from "../src/local-providers";
-import { readReport, type Report } from "../src/report";
+import { readReport, type Report, type TeamAccount } from "../src/report";
 import { readTaken } from "../src/take";
 
 const require = createRequire(import.meta.url);
@@ -226,5 +226,64 @@ describe("the report read on the server", () => {
     const raw = structuredClone(demoTeam);
     const providers = (r: Report) => r.team.providers.map((p) => p.provider).sort();
     expect(providers(readTaken(raw))).toEqual(providers(readReport(structuredClone(raw))));
+  });
+});
+
+describe("the freshest reading wins", () => {
+  const LOGIN = "fresh-login";
+  const reading = (percent: number, hostName = "fresh-host") => ({
+    hostName,
+    user: "fresh-user",
+    providers: [{ provider: "freshplan", name: LOGIN, plan: "Fresh", windows: [{ name: "fresh", percentUsed: percent, resetsAt: null }] }],
+  });
+  const login = (report: Report): TeamAccount => {
+    const accounts = report.team.providers.find((p) => p.provider === "freshplan")!.accounts.filter((a) => a.name === LOGIN);
+    expect(accounts.length).toBe(1);
+    return accounts[0]!;
+  };
+  const percent = (report: Report) => login(report).quota!.windows[0]!.percent;
+
+  afterEach(() => setSystemTime());
+
+  test("a stale reading never overwrites a newer one", () => {
+    const report = readReport(structuredClone(demoTeam));
+    mergeMeasured(report, reading(10));
+    mergeMeasured(report, reading(50, "old-host"), { measuredAt: Date.now() - 3 * 3_600_000 });
+    expect(percent(report)).toBe(10);
+    expect(login(report).quota!.stale).toBe(false);
+    expect(login(report).devices).toContain("old-host");
+  });
+
+  test("a reading replaces an existing quota whose observed_at is missing", () => {
+    const report = readReport(structuredClone(demoTeam));
+    mergeMeasured(report, reading(10));
+    login(report).quota!.observed_at = "";
+    mergeMeasured(report, reading(25));
+    expect(percent(report)).toBe(25);
+  });
+
+  test("on a tie, a live reading beats a stale one", () => {
+    const report = readReport(structuredClone(demoTeam));
+    const at = Date.parse("2026-11-04T12:00:00Z");
+    mergeMeasured(report, reading(60, "snap-host"), { measuredAt: at });
+    expect(login(report).quota!.stale).toBe(true);
+    setSystemTime(new Date(at));
+    mergeMeasured(report, reading(20));
+    expect(percent(report)).toBe(20);
+    expect(login(report).quota!.stale).toBe(false);
+  });
+
+  test("two snapshots merged in either order give the newer one", () => {
+    const newer = Date.now() - 1 * 3_600_000;
+    const older = Date.now() - 3 * 3_600_000;
+    const forward = readReport(structuredClone(demoTeam));
+    mergeMeasured(forward, reading(30, "snap-a"), { measuredAt: newer });
+    mergeMeasured(forward, reading(70, "snap-b"), { measuredAt: older });
+    const backward = readReport(structuredClone(demoTeam));
+    mergeMeasured(backward, reading(70, "snap-b"), { measuredAt: older });
+    mergeMeasured(backward, reading(30, "snap-a"), { measuredAt: newer });
+    expect(percent(forward)).toBe(30);
+    expect(percent(backward)).toBe(30);
+    expect(login(backward).quota!.observed_at).toBe(new Date(newer).toISOString());
   });
 });

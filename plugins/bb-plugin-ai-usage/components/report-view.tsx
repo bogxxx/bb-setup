@@ -20,8 +20,10 @@ import {
   left,
   matrixNote,
   matrixView,
+  offlineSuffix,
   plan,
   provider,
+  quotaAge,
   share,
   shortName,
   usd,
@@ -91,6 +93,7 @@ function Subscriptions({ report, now, timeZone }: ReportProps) {
           g.accounts.map((a) => {
             const windows = cardWindows(g.provider, a);
             const extra = a.extra_usage !== null && g.provider === "claude" ? extraUsageWords(a.extra_usage) : null;
+            const age = a.quota !== null ? quotaAge(a.quota, now) : 0;
             return (
               <div key={`${g.provider}/${a.label}`} className="space-y-2 rounded-lg border border-border bg-card p-3">
                 <div className="flex items-center justify-between gap-2">
@@ -132,7 +135,7 @@ function Subscriptions({ report, now, timeZone }: ReportProps) {
                   {a.devices.length > 1 ? ` · ${a.devices.length} machines` : ""}
                   {a.busiest !== null && a.users > 1 ? ` · most: ${a.busiest}` : ""}
                   {a.last_active_at !== null ? ` · last used ${ago(a.last_active_at, now)}` : ""}
-                  {a.quota !== null && a.quota.age_seconds >= 600 ? ` · reading ${duration(a.quota.age_seconds)} old` : ""}
+                  {a.quota !== null && age >= 600 ? ` · reading ${duration(age)} old${offlineSuffix(report, a.quota)}` : ""}
                 </div>
               </div>
             );

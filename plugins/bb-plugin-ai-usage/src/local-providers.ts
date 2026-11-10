@@ -1140,6 +1140,21 @@ function sameQuota(plan: string | null, windows: Window[], account: TeamAccount)
   return quotaSignature(plan, windows) === quotaSignature(account.plan, account.quota.windows);
 }
 
+/**
+ * Whether two account names are one login: equal, or a bare login and the email with that local part.
+ * Two addresses match only when they are equal, so a@x.com and a@y.com are different logins.
+ */
+function sameLoginName(a: string, b: string): boolean {
+  const x = a.trim().toLowerCase();
+  const y = b.trim().toLowerCase();
+  if (x === "" || y === "") return false;
+  if (x === y) return true;
+  const isEmail = (s: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s);
+  if (isEmail(x) && !y.includes("@")) return x.slice(0, x.indexOf("@")) === y;
+  if (isEmail(y) && !x.includes("@")) return y.slice(0, y.indexOf("@")) === x;
+  return false;
+}
+
 /** Hostnames this report already uses as machine names. An account title that matches one is not a login. */
 function hostLabels(report: Report, hostName: string): Set<string> {
   const out = new Set<string>();
@@ -1270,7 +1285,7 @@ function hostOf(name: string): string {
  *
  * With `measuredAt`, the reading is an earlier one kept for a machine that is offline or whose live
  * reading failed. Its device says when it was last seen, and its logins are marked stale with that
- * time. Anything read at or after `measuredAt` is kept as it is.
+ * time. Each login keeps whichever quota was read last, so a snapshot never replaces a newer reading.
  */
 export function mergeMeasured(
   report: Report,
@@ -1340,7 +1355,8 @@ export function mergeMeasured(
       continue;
     }
     const incomingIsHost = hosts.has(provider.name.toLowerCase());
-    const candidates = group.accounts.filter((a) => a.name === account.name || (windows.length > 0 && sameQuota(provider.plan, windows, a)));
+    const sameLogin = (a: TeamAccount) => !incomingIsHost && [a.name, a.label].some((name) => !hosts.has(name.toLowerCase()) && sameLoginName(provider.name, name));
+    const candidates = group.accounts.filter((a) => a.name === account.name || sameLogin(a) || (windows.length > 0 && sameQuota(provider.plan, windows, a)));
     // The login wins over a machine name when both describe one quota.
     const existing = candidates.find((a) => !hosts.has(a.name.toLowerCase())) ?? candidates[0];
     if (existing === undefined) {
@@ -1356,15 +1372,23 @@ export function mergeMeasured(
       foldCost(report, provider.provider, provider.name, previous);
     }
     if (provider.name !== existing.name) foldCost(report, provider.provider, existing.name, provider.name);
-    // A stale reading never overwrites a quota read at or after it was taken.
-    const newer = stale && existing.quota !== null && Date.parse(existing.quota.observed_at) >= at;
+    // The freshest reading wins: a live one is read now, a snapshot when it was taken. On a tie, live beats stale.
+    const incomingAt = stale ? at : Date.now();
+    const parsed = Date.parse(existing.quota?.observed_at ?? "");
+    const existingAt = Number.isFinite(parsed) ? parsed : -Infinity;
+    const wins = windows.length > 0 && (incomingAt > existingAt || (incomingAt === existingAt && !stale && existing.quota?.stale === true));
     const unchanged = windows.length > 0 && sameQuota(provider.plan, windows, existing);
-    if (windows.length > 0 && !unchanged && !newer) {
-      existing.quota = account.quota;
-      existing.plan = account.plan ?? existing.plan;
-      existing.state = account.state;
+    if (wins && account.quota !== null) {
+      if (unchanged && existing.quota !== null) {
+        // The same numbers, read later: keep the windows and take the newer time.
+        Object.assign(existing.quota, { observed_at: account.quota.observed_at, age_seconds: account.quota.age_seconds, stale: account.quota.stale, device: account.quota.device });
+      } else {
+        existing.quota = account.quota;
+        existing.plan = account.plan ?? existing.plan;
+        existing.state = account.state;
+      }
     }
-    if (!newer) existing.devices = withDevice(existing.devices, shownOn);
+    existing.devices = withDevice(existing.devices, shownOn);
     group.accounts = group.accounts.filter((other) => {
       if (other === existing) return true;
       if (!sameQuota(provider.plan, windows, other)) return true;

@@ -1,7 +1,7 @@
 // How the panel prints the report's numbers and times, the way the menu bar
 // app does (macos/Sources/AIUsageKit/Format.swift, Glance.swift). It picks
 // among what the report decided and works out nothing of its own.
-import type { Attention, ExtraUsage, MatrixCell, MatrixColumn, MatrixRow, Report, Share, TeamAccount, TeamDevice, Usage, Window } from "./report.js";
+import type { Attention, ExtraUsage, MatrixCell, MatrixColumn, MatrixRow, Quota, Report, Share, TeamAccount, TeamDevice, Usage, Window } from "./report.js";
 
 export const NONE = "–";
 
@@ -48,6 +48,25 @@ export function ago(at: string | null | undefined, now: number): string | null {
   const d = (now - Date.parse(at)) / 1000;
   if (!Number.isFinite(d)) return null;
   return d < 60 ? "just now" : `${duration(d)} ago`;
+}
+
+/** Seconds since a quota was read, at `now`. The report's own age when its read time does not parse. */
+export function quotaAge(quota: Quota, now: number): number {
+  const at = Date.parse(quota.observed_at);
+  return Number.isFinite(at) ? Math.max(0, Math.round((now - at) / 1000)) : quota.age_seconds;
+}
+
+/**
+ * " · <machine> offline" when the machine a quota was read on is offline, else "". The quota's device
+ * is user@host; it matches a device by its name, its device id, or the host part of its name.
+ */
+export function offlineSuffix(report: Report, quota: Quota): string {
+  if (quota.device === null) return "";
+  const device = quota.device.toLowerCase();
+  const host = (s: string) => s.slice(s.lastIndexOf("@") + 1);
+  const found = report.team.devices.find((d) => d.device === quota.device || d.name.toLowerCase() === device || host(d.name.toLowerCase()) === host(device));
+  if (found === undefined || !found.old) return "";
+  return ` · ${found.label !== "" ? found.label : deviceName(found)} offline`;
 }
 
 /** A time within six days as a weekday and a 24-hour clock, "Sun 01:00"; else "2 Oct 15:04". */

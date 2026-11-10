@@ -81,3 +81,52 @@ describe("two machines under one OS user", () => {
     expect(seat.quota!.stale).toBe(false);
   });
 });
+
+describe("a bare login and its email are one account", () => {
+  const rows = (report: Report, provider: string) => report.team.providers.find((p) => p.provider === provider)!.accounts.filter((a) => a.subscription);
+  const claude = (name: string, percentUsed: number) => ({ provider: "claude", name, plan: "Max", windows: [{ name: "login-7d", percentUsed, resetsAt: null }] });
+
+  test("a live bare login and a stale email with its local part give one row, the live reading", () => {
+    const report = readReport(structuredClone(demoTeam));
+    mergeMeasured(report, { hostName: "host-a", user: SHARED_USER, providers: [claude("krechko.bogdan", 10)] });
+    mergeMeasured(report, { hostName: "host-b", user: SHARED_USER, providers: [claude("krechko.bogdan@gmail.com", 50)] }, { measuredAt: Date.now() - 3_600_000 });
+    const matched = rows(report, "claude").filter((a) => a.name.startsWith("krechko.bogdan"));
+    expect(matched.length).toBe(1);
+    expect(matched[0]!.name).toBe("krechko.bogdan");
+    expect(matched[0]!.quota!.windows[0]!.percent).toBe(10);
+    expect(matched[0]!.devices).toEqual(expect.arrayContaining(["host-a", "host-b"]));
+  });
+
+  test("the same two in the other order give one row, still the live reading", () => {
+    const report = readReport(structuredClone(demoTeam));
+    mergeMeasured(report, { hostName: "host-b", user: SHARED_USER, providers: [claude("krechko.bogdan@gmail.com", 50)] }, { measuredAt: Date.now() - 3_600_000 });
+    mergeMeasured(report, { hostName: "host-a", user: SHARED_USER, providers: [claude("krechko.bogdan", 10)] });
+    const matched = rows(report, "claude").filter((a) => a.name.startsWith("krechko.bogdan"));
+    expect(matched.length).toBe(1);
+    expect(matched[0]!.quota!.windows[0]!.percent).toBe(10);
+  });
+
+  test("two different email addresses stay two rows", () => {
+    const report = readReport(structuredClone(demoTeam));
+    mergeMeasured(report, { hostName: "host-a", user: SHARED_USER, providers: [claude("a@x.com", 10)] });
+    mergeMeasured(report, { hostName: "host-b", user: SHARED_USER, providers: [claude("a@y.com", 50)] });
+    const matched = rows(report, "claude").filter((a) => a.name.startsWith("a@"));
+    expect(matched.map((a) => a.name).sort()).toEqual(["a@x.com", "a@y.com"]);
+  });
+
+  test("a user@host device name is not a login, so it does not merge into the bare login", () => {
+    const report = readReport(structuredClone(demoTeam));
+    mergeMeasured(report, { hostName: "host-a", user: SHARED_USER, providers: [claude("krech", 10)] });
+    mergeMeasured(report, { hostName: "host-b", user: SHARED_USER, providers: [claude("krech@predator", 50)] }, { measuredAt: Date.now() - 3_600_000 });
+    const matched = rows(report, "claude").filter((a) => a.name.startsWith("krech"));
+    expect(matched.map((a) => a.name).sort()).toEqual(["krech", "krech@predator"]);
+  });
+
+  test("a hostname with the same quota as a login still folds into it", () => {
+    const report = readReport(structuredClone(demoTeam));
+    mergeMeasured(report, { hostName: "host-a", user: SHARED_USER, providers: [claude("krechko.bogdan@gmail.com", 10)] });
+    mergeMeasured(report, { hostName: "host-b", user: SHARED_USER, providers: [claude("host-b-machine", 10)] }, { measuredAt: Date.now() - 3_600_000 });
+    const matched = rows(report, "claude").filter((a) => a.name.startsWith("krechko.bogdan") || a.name === "host-b-machine");
+    expect(matched.map((a) => a.name)).toEqual(["krechko.bogdan@gmail.com"]);
+  });
+});
