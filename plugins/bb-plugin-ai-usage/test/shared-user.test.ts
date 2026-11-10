@@ -122,6 +122,30 @@ describe("a bare login and its email are one account", () => {
     expect(matched.map((a) => a.name).sort()).toEqual(["krech", "krech@predator"]);
   });
 
+  test("two different emails with identical quota numbers stay two rows", () => {
+    const report = readReport(structuredClone(demoTeam));
+    mergeMeasured(report, { hostName: "host-a", user: SHARED_USER, providers: [claude("same@x.com", 10)] });
+    mergeMeasured(report, { hostName: "host-b", user: SHARED_USER, providers: [claude("same@y.com", 10)] });
+    const matched = rows(report, "claude").filter((a) => a.name.startsWith("same@"));
+    expect(matched.map((a) => a.name).sort()).toEqual(["same@x.com", "same@y.com"]);
+  });
+
+  test("a dotted user@host name is not a login: a live bare login from that host stays separate", () => {
+    const report = readReport(structuredClone(demoTeam));
+    mergeMeasured(report, { hostName: "predator.local", user: SHARED_USER, providers: [claude("krech", 10)] });
+    mergeMeasured(report, { hostName: "predator.local", user: SHARED_USER, providers: [claude("krech@predator.local", 50)] }, { measuredAt: Date.now() - 3_600_000 });
+    const matched = rows(report, "claude").filter((a) => a.name.startsWith("krech"));
+    expect(matched.map((a) => a.name).sort()).toEqual(["krech", "krech@predator.local"]);
+  });
+
+  test("a dotted user@host name seen first is not merged into a bare login that comes later", () => {
+    const report = readReport(structuredClone(demoTeam));
+    mergeMeasured(report, { hostName: "predator.local", user: SHARED_USER, providers: [claude("krech@predator.local", 50)] }, { measuredAt: Date.now() - 3_600_000 });
+    mergeMeasured(report, { hostName: "host-a", user: SHARED_USER, providers: [claude("krech", 10)] });
+    const matched = rows(report, "claude").filter((a) => a.name.startsWith("krech"));
+    expect(matched.map((a) => a.name).sort()).toEqual(["krech", "krech@predator.local"]);
+  });
+
   test("a hostname with the same quota as a login still folds into it", () => {
     const report = readReport(structuredClone(demoTeam));
     mergeMeasured(report, { hostName: "host-a", user: SHARED_USER, providers: [claude("krechko.bogdan@gmail.com", 10)] });

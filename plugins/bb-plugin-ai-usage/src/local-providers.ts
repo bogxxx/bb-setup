@@ -6,7 +6,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { stepLimit } from "./budget.js";
-import type { MatrixCell, Report, Share, TeamAccount, Usage, Window } from "./report.js";
+import type { MatrixCell, Quota, Report, Share, TeamAccount, Usage, Window } from "./report.js";
 
 const require = createRequire(import.meta.url);
 
@@ -1140,6 +1140,11 @@ function sameQuota(plan: string | null, windows: Window[], account: TeamAccount)
   return quotaSignature(plan, windows) === quotaSignature(account.plan, account.quota.windows);
 }
 
+/** A full email address: a local part, an @, and a dotted domain. */
+function isEmailName(s: string): boolean {
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s);
+}
+
 /**
  * Whether two account names are one login: equal, or a bare login and the email with that local part.
  * Two addresses match only when they are equal, so a@x.com and a@y.com are different logins.
@@ -1149,10 +1154,21 @@ function sameLoginName(a: string, b: string): boolean {
   const y = b.trim().toLowerCase();
   if (x === "" || y === "") return false;
   if (x === y) return true;
-  const isEmail = (s: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s);
-  if (isEmail(x) && !y.includes("@")) return x.slice(0, x.indexOf("@")) === y;
-  if (isEmail(y) && !x.includes("@")) return y.slice(0, y.indexOf("@")) === x;
+  if (isEmailName(x) && !y.includes("@")) return x.slice(0, x.indexOf("@")) === y;
+  if (isEmailName(y) && !x.includes("@")) return y.slice(0, y.indexOf("@")) === x;
   return false;
+}
+
+/** Two different email addresses are two logins, even when their quota numbers match. */
+function distinctEmailLogins(a: string, b: string): boolean {
+  const x = a.trim().toLowerCase();
+  const y = b.trim().toLowerCase();
+  return isEmailName(x) && isEmailName(y) && x !== y;
+}
+
+/** The quota with each window marked stale as the quota is, so the card shows "~" for a stale reading. */
+function withStale(quota: Quota): Quota {
+  return { ...quota, windows: quota.windows.map((w) => ({ ...w, stale: quota.stale })) };
 }
 
 /** Hostnames this report already uses as machine names. An account title that matches one is not a login. */
@@ -1338,11 +1354,7 @@ export function mergeMeasured(
       plan: provider.plan,
       no_reading: windows.length === 0 ? "Signed in. No limit reading yet." : null,
     });
-    if (stale && account.quota !== null) {
-      account.quota.stale = true;
-      account.quota.age_seconds = ageSeconds;
-      account.quota.observed_at = seenAt!;
-    }
+    if (stale && account.quota !== null) account.quota = withStale({ ...account.quota, stale: true, age_seconds: ageSeconds, observed_at: seenAt! });
     const remember = () => {
       if (windows.length === 0) return;
       seatInMatrix(report, provider.provider, account.name, account.state);
@@ -1355,8 +1367,16 @@ export function mergeMeasured(
       continue;
     }
     const incomingIsHost = hosts.has(provider.name.toLowerCase());
-    const sameLogin = (a: TeamAccount) => !incomingIsHost && [a.name, a.label].some((name) => !hosts.has(name.toLowerCase()) && sameLoginName(provider.name, name));
-    const candidates = group.accounts.filter((a) => a.name === account.name || sameLogin(a) || (windows.length > 0 && sameQuota(provider.plan, windows, a)));
+    // A user@host device name, even with a dotted host, is not a login: its host is a machine this report knows.
+    const machineNames = new Set([...hosts, ...names]);
+    const deviceLike = (name: string) => {
+      const lower = name.toLowerCase();
+      return machineNames.has(lower) || (lower.includes("@") && machineNames.has(hostOf(lower)));
+    };
+    const sameLogin = (a: TeamAccount) => !deviceLike(provider.name) && [a.name, a.label].some((name) => !deviceLike(name) && sameLoginName(provider.name, name));
+    const candidates = group.accounts.filter(
+      (a) => a.name === account.name || sameLogin(a) || (windows.length > 0 && !distinctEmailLogins(provider.name, a.name) && sameQuota(provider.plan, windows, a)),
+    );
     // The login wins over a machine name when both describe one quota.
     const existing = candidates.find((a) => !hosts.has(a.name.toLowerCase())) ?? candidates[0];
     if (existing === undefined) {
@@ -1380,10 +1400,10 @@ export function mergeMeasured(
     const unchanged = windows.length > 0 && sameQuota(provider.plan, windows, existing);
     if (wins && account.quota !== null) {
       if (unchanged && existing.quota !== null) {
-        // The same numbers, read later: keep the windows and take the newer time.
-        Object.assign(existing.quota, { observed_at: account.quota.observed_at, age_seconds: account.quota.age_seconds, stale: account.quota.stale, device: account.quota.device });
+        // The same numbers, read later: keep the windows, take the newer time and its stale marks.
+        existing.quota = withStale({ ...existing.quota, observed_at: account.quota.observed_at, age_seconds: account.quota.age_seconds, stale: account.quota.stale, device: account.quota.device });
       } else {
-        existing.quota = account.quota;
+        existing.quota = withStale(account.quota);
         existing.plan = account.plan ?? existing.plan;
         existing.state = account.state;
       }

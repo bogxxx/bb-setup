@@ -273,6 +273,27 @@ describe("the freshest reading wins", () => {
     expect(login(report).quota!.stale).toBe(false);
   });
 
+  test("identical numbers read later clear the stale state of the quota and its windows", () => {
+    const report = readReport(structuredClone(demoTeam));
+    mergeMeasured(report, reading(10), { measuredAt: Date.now() - 3_600_000 });
+    expect(login(report).quota!.stale).toBe(true);
+    expect(login(report).quota!.windows[0]!.stale).toBe(true);
+    mergeMeasured(report, reading(10));
+    expect(login(report).quota!.stale).toBe(false);
+    expect(login(report).quota!.windows[0]!.stale).toBe(false);
+    expect(percent(report)).toBe(10);
+  });
+
+  test("identical numbers from a newer snapshot mark the kept windows stale", () => {
+    const report = readReport(structuredClone(demoTeam));
+    setSystemTime(new Date(Date.now() - 2 * 3_600_000));
+    mergeMeasured(report, reading(10));
+    setSystemTime();
+    mergeMeasured(report, reading(10, "snap-host"), { measuredAt: Date.now() - 3_600_000 });
+    expect(login(report).quota!.stale).toBe(true);
+    expect(login(report).quota!.windows[0]!.stale).toBe(true);
+  });
+
   test("two snapshots merged in either order give the newer one", () => {
     const newer = Date.now() - 1 * 3_600_000;
     const older = Date.now() - 3 * 3_600_000;
