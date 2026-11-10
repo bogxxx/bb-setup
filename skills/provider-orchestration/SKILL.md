@@ -1,6 +1,6 @@
 ---
 name: provider-orchestration
-description: Route development work through the current provider's orchestrator, explorer, planner, and worker. Copilot reviews run on Opus 5.5. Claude reviews run on Gemini 4 Argon or the Cursor cantrip reviewer. Use for a task larger than a lookup or one-line edit, and when choosing models for Cursor, Claude Code, or GitHub Copilot.
+description: Route development work through the current provider's orchestrator, explorer, planner, and worker. Copilot reviews run on Opus 5.5. Claude reviews run on Gemini 4 Argon, Gemini 3.8 Flash, or the Cursor cantrip reviewer. Use for a task larger than a lookup or one-line edit, and when choosing models for Cursor, Claude Code, or GitHub Copilot.
 ---
 
 # Provider orchestration
@@ -104,9 +104,9 @@ Confirmed catalog ids, effort `medium`:
 | explorer | `claude-haiku-5-5` |
 | worker | `claude-haiku-5-5` |
 
-Opus and Haiku do not review Claude work. The review is Gemini 4 Argon (`gemini-4-argon` on Antigravity, provider `acp-antigravity`), or `cantrip-review` when the session is Cursor.
+Opus and Haiku do not review Claude work. The review is Gemini 4 Argon (`gemini-4-argon` on Antigravity, provider `acp-antigravity`); when that is out of quota, Gemini 3.8 Flash (`gemini-3.8-flash` on Antigravity). It is `cantrip-review` when the session is Cursor.
 
-Spawn the review with the `spawn` tool, name `review`, and `worker` set to the contribute thread id. The tool sets provider `acp-antigravity`, model `gemini-4-argon`, and reasoning level `medium`. Do not pass `--option agent=reviewer` (that is the Copilot persona, Opus 5.5), and do not run `bb thread spawn` for the review, because that skips the loop protocol. Allow at most two fix rounds (see Review loop).
+Spawn the review with the `spawn` tool, name `review`, and `worker` set to the contribute thread id. The tool sets provider `acp-antigravity`, model `gemini-4-argon`, and reasoning level `medium`. It tries the reviewers in order (Argon, the Copilot `reviewer` on GPT 6.1 Sol, Gemini 3.8 Flash, then Cursor) and skips any model that is out of quota. Do not pass `--option agent=reviewer` (that is the Copilot persona, Opus 5.5), and do not run `bb thread spawn` for the review, because that skips the loop protocol. Allow at most two fix rounds (see Review loop).
 
 ## Any other provider
 

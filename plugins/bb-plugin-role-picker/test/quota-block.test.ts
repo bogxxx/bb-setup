@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseQuotaBlock, quotaBlockEnd, QUOTA_BLOCK_CAP_MS } from "../lib/quota-block";
+import { blockKey, parseQuotaBlock, quotaBlockEnd, QUOTA_BLOCK_CAP_MS, reviewerModelKey } from "../lib/quota-block";
 
 const HOUR = 60 * 60 * 1000;
 
@@ -22,5 +22,17 @@ describe("quota blocks", () => {
     expect(quotaBlockEnd(block!)).toBe(setAt + QUOTA_BLOCK_CAP_MS);
     expect(setAt + 6 * HOUR - 1).toBeLessThan(quotaBlockEnd(block!));
     expect(setAt + 6 * HOUR + 1).toBeGreaterThan(quotaBlockEnd(block!));
+  });
+});
+
+describe("block keys", () => {
+  test("a provider key has no model, and a model key adds it", () => {
+    expect(blockKey("acp-antigravity")).toBe("quota-blocked:acp-antigravity");
+    expect(blockKey("acp-antigravity", "gemini-4-argon")).toBe("quota-blocked:acp-antigravity:gemini-4-argon");
+  });
+
+  test("a reviewer's key is its model, or its agent file for Cursor", () => {
+    expect(reviewerModelKey({ providerId: "acp-antigravity", model: "gemini-4-argon" })).toBe("gemini-4-argon");
+    expect(reviewerModelKey({ providerId: "acp-cursor", agent: { name: "cantrip-review.md" } })).toBe("cantrip-review.md");
   });
 });

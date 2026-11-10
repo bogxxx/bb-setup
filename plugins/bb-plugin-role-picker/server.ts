@@ -16,7 +16,7 @@ import {
   parseAskArgs,
   parseAskInput,
 } from "./lib/ask.js";
-import { parseQuotaBlock, quotaBlockEnd, type QuotaBlock } from "./lib/quota-block.js";
+import { blockKey, parseQuotaBlock, quotaBlockEnd, reviewerModelKey, type QuotaBlock } from "./lib/quota-block.js";
 import { resolveReviewHostId, usageLimitsQuery, usageSkip } from "./lib/review-skip.js";
 
 export const ROLES = ["regular", "orchestrator", "interviewer"] as const;
@@ -79,11 +79,15 @@ type SpawnSpec = {
 // the same launcher, agents, and logic; only the gh login differs. A thread on one stays on it.
 const COPILOT_PROVIDERS = new Set(["acp-github-copilot-cli", "acp-github-copilot-sopra"]);
 
+// The non-Argon Gemini on Antigravity, the third reviewer for a Claude worker. Change it here only.
+export const ANTIGRAVITY_GEMINI_FALLBACK = "gemini-3.8-flash";
+
 // Reviewers by id. Fallback order is per worker provider in REVIEW_ORDER.
 const REVIEWERS: Record<string, SpawnSpec> = {
   gemini: { providerId: "acp-antigravity", model: "gemini-4-argon", reasoningLevel: "medium" },
   "copilot-opus": { providerId: "acp-github-copilot-cli", model: "claude-opus-5.5-medium", reasoningLevel: "medium", sessionOptions: { agent: "reviewer" } },
   "copilot-sol": { providerId: "acp-github-copilot-cli", model: "gpt-6.1-sol-medium", reasoningLevel: "medium", sessionOptions: { agent: "reviewer" } },
+  "gemini-alt": { providerId: "acp-antigravity", model: ANTIGRAVITY_GEMINI_FALLBACK, reasoningLevel: "medium" },
   "claude-opus": { providerId: "claude-code", model: "claude-opus-5-5", reasoningLevel: "medium" },
   codex: { providerId: "codex", model: "gpt-6.1-sol", reasoningLevel: "medium" },
   // cantrip-review: its model and instructions come from the agent file.
@@ -91,13 +95,14 @@ const REVIEWERS: Record<string, SpawnSpec> = {
 };
 
 // The reviewer chain for a worker on a provider, tried in order when one runs out of quota.
-// No entry runs on the worker's provider and no two entries share a provider, except Copilot
-// and Cursor: their work stays inside them and is reviewed there by another vendor's model
+// No entry runs on the worker's provider. No exact provider and model pair appears twice, so two
+// steps may share a provider when they use separately limited models (Antigravity's Argon and
+// Gemini fallback). Copilot and Cursor review inside themselves on another vendor's model
 // (Copilot's GPT worker gets Opus; Cursor gets cantrip-review on Meta's Muse).
 // A Claude worker is never reviewed by a Claude model (Opus or Haiku). Everyone else gets
 // Opus 5.5 second, unless it is already first.
 const REVIEW_ORDER: Record<string, string[]> = {
-  "claude-code": ["gemini", "copilot-sol", "cursor"],
+  "claude-code": ["gemini", "copilot-sol", "gemini-alt", "cursor"],
   "acp-github-copilot-cli": ["copilot-opus"],
   "acp-github-copilot-sopra": ["copilot-opus"],
   "acp-cursor": ["cursor"],
@@ -107,10 +112,11 @@ const REVIEW_ORDER: Record<string, string[]> = {
 
 const SAME_PROVIDER_REVIEW = new Set([...COPILOT_PROVIDERS, "acp-cursor"]);
 
-function reviewChain(parentProviderId: string): SpawnSpec[] {
+export function reviewChain(parentProviderId: string): SpawnSpec[] {
   const order = REVIEW_ORDER[parentProviderId] ?? ["gemini", "claude-opus", "codex"];
   // Copilot and Cursor review their own work on another vendor's model; everyone else leaves their provider.
-  const seen = new Set<string>(SAME_PROVIDER_REVIEW.has(parentProviderId) ? [] : [parentProviderId]);
+  const excluded = new Set<string>(SAME_PROVIDER_REVIEW.has(parentProviderId) ? [] : [parentProviderId]);
+  const seen = new Set<string>();
   const chain: SpawnSpec[] = [];
   for (const id of order) {
     const base = REVIEWERS[id];
@@ -119,8 +125,10 @@ function reviewChain(parentProviderId: string): SpawnSpec[] {
     const spec = COPILOT_PROVIDERS.has(parentProviderId) && COPILOT_PROVIDERS.has(base.providerId)
       ? { ...base, providerId: parentProviderId }
       : base;
-    if (seen.has(spec.providerId)) continue;
-    seen.add(spec.providerId);
+    if (excluded.has(spec.providerId)) continue;
+    const key = `${spec.providerId}\u0000${reviewerModelKey(spec)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
     chain.push(spec);
   }
   return chain;
@@ -132,8 +140,13 @@ function reviewerAt(record: ReviewRecord, index: number): SpawnSpec {
   return typeof entry === "string" ? REVIEWERS[entry] : entry;
 }
 
+/** A reviewer as provider/model, for messages: the step's provider and the model it runs on. */
+function reviewerLabel(spec: SpawnSpec): string {
+  return `${spec.providerId}/${reviewerModelKey(spec)}`;
+}
+
 function chainProviders(record: ReviewRecord): string {
-  return record.chain.map((_, i) => reviewerAt(record, i).providerId).join(", ");
+  return record.chain.map((_, i) => reviewerLabel(reviewerAt(record, i))).join(", ");
 }
 
 function spawnSpec(parentProviderId: string, name: Exclude<SpawnName, "review">): SpawnSpec {
@@ -166,11 +179,22 @@ function spawnSpec(parentProviderId: string, name: Exclude<SpawnName, "review">)
 
 // A failure that means the provider cannot serve this review: quota, credits, spend limit, or login.
 const QUOTA_CATEGORIES = new Set(["rate-limit", "billing", "budget-exceeded", "unauthorized"]);
+const ACCOUNT_CATEGORIES = new Set(["billing", "budget-exceeded", "unauthorized"]);
 const DEFAULT_BLOCK_MS = 60 * 60 * 1000;
 
-// Some providers (Antigravity) do not fail the turn on quota: they reply with a short notice,
-// such as "⚠ Individual quota reached. ... Resets in 144h15m35s.", and complete the turn.
-const QUOTA_NOTICE = /\bquota (?:reached|exceeded|exhausted)\b|\b(?:usage|rate) limit (?:reached|exceeded)\b/i;
+// Some providers do not fail the turn on quota: they reply with a short notice and complete the turn.
+// Antigravity: "⚠ Individual quota reached. ... Resets in 144h15m35s." Copilot: "Error: You have
+// exceeded your monthly quota (Request ID: …)".
+const QUOTA_NOTICE = new RegExp(
+  [
+    String.raw`\bquota (?:reached|exceeded|exhausted)\b`,
+    String.raw`\b(?:usage|rate) limit (?:reached|exceeded)\b`,
+    String.raw`\bexceeded (?:your|the) (?:\w+ )?quota\b`,
+    String.raw`\bout of (?:\w+ )?quota\b`,
+    String.raw`\bquota (?:has been|was|is) (?:reached|exceeded|exhausted)\b`,
+  ].join("|"),
+  "i",
+);
 
 /** The reset time from a provider's quota notice, when the reply is one. Null when it is not. */
 export function quotaNoticeUntil(text: string | null, now = Date.now()): number | null {
@@ -609,18 +633,26 @@ export default async function plugin(bb: BbPluginApi) {
 
   // Quota tracking. A provider that failed a reviewer on quota is skipped until its window resets.
   const kv = bb.storage.kv;
-  const blockKey = (providerId: string) => `quota-blocked:${providerId}`;
   const reviewKey = (threadId: string) => `review:${threadId}`;
 
-  /** Why a provider is skipped for a review, or null when it can be tried. */
-  async function skipReason(providerId: string, hostId: string | null): Promise<string | null> {
-    const stored = await kv.get<unknown>(blockKey(providerId));
-    if (stored !== undefined && stored !== null) {
-      const block = parseQuotaBlock(stored);
-      const end = block ? quotaBlockEnd(block) : 0;
-      if (block && Date.now() < end) return `quota block until ${new Date(end).toISOString()}`;
-      await kv.delete(blockKey(providerId));
-    }
+  /** The reason a stored block is still active, or null when there is none or it has expired. */
+  async function activeBlock(key: string): Promise<string | null> {
+    const stored = await kv.get<unknown>(key);
+    if (stored === undefined || stored === null) return null;
+    const block = parseQuotaBlock(stored);
+    const end = block ? quotaBlockEnd(block) : 0;
+    if (block && Date.now() < end) return `quota block until ${new Date(end).toISOString()}`;
+    await kv.delete(key);
+    return null;
+  }
+
+  /** Why a reviewer step is skipped, or null when it can be tried. */
+  async function skipReason(spec: SpawnSpec, hostId: string | null): Promise<string | null> {
+    const providerId = spec.providerId;
+    const model = reviewerModelKey(spec);
+    // The provider-wide key is read first: it also holds blocks written before blocks were per model.
+    const blocked = (await activeBlock(blockKey(providerId))) ?? (await activeBlock(blockKey(providerId, model)));
+    if (blocked) return blocked;
     // Best effort: a provider whose usage report shows a used-up window, or no usable login, is skipped.
     // hostId is the machine the reviewer will run on. Without one, install status says nothing about that machine.
     try {
@@ -628,7 +660,7 @@ export default async function plugin(bb: BbPluginApi) {
         bb.sdk.system.usageLimits(usageLimitsQuery(providerId, hostId)),
         new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
       ]);
-      return usageSkip(usage?.[providerId], Boolean(hostId));
+      return usageSkip(usage?.[providerId], Boolean(hostId), spec.model);
     } catch {
       // No usage report for this provider; assume it is available.
     }
@@ -651,9 +683,9 @@ export default async function plugin(bb: BbPluginApi) {
     for (let index = record.index; index < record.chain.length; index++) {
       const spec = reviewerAt(record, index);
       const providerId = spec.providerId;
-      const skip = await skipReason(providerId, hostId);
+      const skip = await skipReason(spec, hostId);
       if (skip) {
-        bb.log.info(`review skips ${providerId} (${skip}) on ${hostId ?? "no resolved host"} for worker ${record.worker}`);
+        bb.log.info(`review skips ${reviewerLabel(spec)} (${skip}) on ${hostId ?? "no resolved host"} for worker ${record.worker}`);
         continue;
       }
       const defined = spec.agent ? agentDefinition(spec.agent, (message) => bb.log.warn(message)) : undefined;
@@ -691,22 +723,24 @@ export default async function plugin(bb: BbPluginApi) {
 
   // A reviewer stopped on its provider's quota: block that provider until the reset, stop the
   // reviewer, start the next one in the chain, and tell the orchestrator.
-  async function moveReview(threadId: string, until: number, reason: string): Promise<void> {
+  // scope "model" blocks only the failed reviewer's model; "provider" blocks every model on its provider.
+  async function moveReview(threadId: string, until: number, reason: string, scope: "model" | "provider"): Promise<void> {
     const record = await kv.get<ReviewRecord>(reviewKey(threadId));
     if (!record) return;
     // Delete first, so a second event for the same reviewer does not move the review twice.
     await kv.delete(reviewKey(threadId));
 
-    const failedProvider = reviewerAt(record, record.index).providerId;
+    const failed = reviewerAt(record, record.index);
+    const failedName = scope === "provider" ? failed.providerId : reviewerLabel(failed);
     const block: QuotaBlock = { until, setAt: Date.now() };
-    await kv.set(blockKey(failedProvider), block);
+    await kv.set(blockKey(failed.providerId, scope === "provider" ? undefined : reviewerModelKey(failed)), block);
     const blockedUntil = new Date(quotaBlockEnd(block)).toISOString();
 
     // Stop the failed reviewer so a core retry after the window resets does not run a second review.
     await bb.sdk.threads.archive({ threadId }).catch(() => undefined);
 
     const next = await spawnReviewer({ ...record, index: record.index + 1 }, threadId);
-    const stopped = `Reviewer ${threadId} on ${failedProvider} stopped: provider quota reached (${reason}). ${failedProvider} is skipped for reviews until ${blockedUntil}.`;
+    const stopped = `Reviewer ${threadId} on ${failedName} stopped: provider quota reached (${reason}). ${failedName} is skipped for reviews until ${blockedUntil}.`;
     const text = next
       ? [
           stopped,
@@ -731,14 +765,16 @@ export default async function plugin(bb: BbPluginApi) {
       .filter((w) => w.status === "blocked" && typeof w.resetsAtMs === "number")
       .map((w) => w.resetsAtMs as number);
     const until = resets.length ? Math.max(...resets) : Date.now() + DEFAULT_BLOCK_MS;
-    await moveReview(event.threadId, until, category ?? "rate limit");
+    // Billing, budget and login failures describe the account, so they block the whole provider.
+    const scope = category && ACCOUNT_CATEGORIES.has(category) ? "provider" : "model";
+    await moveReview(event.threadId, until, category ?? "rate limit", scope);
   });
 
-  // Providers that report quota as a reply and complete the turn (Antigravity).
+  // Providers that report quota as a reply and complete the turn (Antigravity, Copilot).
   bb.events.on("thread.idle", async ({ thread, lastAssistantText }) => {
     const until = quotaNoticeUntil(lastAssistantText);
     if (until === null) return;
-    await moveReview(thread.id, until, "quota notice");
+    await moveReview(thread.id, until, "quota notice", "model");
   });
 
   bb.agents.registerTool({

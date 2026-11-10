@@ -16,3 +16,13 @@ export function parseQuotaBlock(stored: unknown): QuotaBlock | null {
 export function quotaBlockEnd(block: QuotaBlock): number {
   return Math.min(block.until, block.setAt + QUOTA_BLOCK_CAP_MS);
 }
+
+/** The storage key for a block on a whole provider, or on one of its models when a model is given. */
+export function blockKey(providerId: string, model?: string): string {
+  return model ? `quota-blocked:${providerId}:${model}` : `quota-blocked:${providerId}`;
+}
+
+/** The model a reviewer runs on: its model id, or its agent file when it has none (Cursor). */
+export function reviewerModelKey(spec: { model?: string; agent?: { name: string } }): string {
+  return spec.model ?? spec.agent?.name ?? "";
+}

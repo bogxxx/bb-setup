@@ -143,4 +143,17 @@ describe("usageSkip", () => {
     expect(usageSkip({ status: "unknown" }, true)).toBeNull();
     expect(usageSkip({ status: "error" }, false)).toBeNull();
   });
+
+  test("a used-up window labelled with a model skips only that model", () => {
+    const argon = { status: "ok", windows: [{ label: "Gemini 4 Argon weekly", usedPercent: 100 }] };
+    expect(usageSkip(argon, true, "gemini-4-argon")).toBe("usage report says a window is used up");
+    expect(usageSkip(argon, true, "gemini-3.8-flash")).toBeNull();
+    expect(usageSkip(argon, true)).toBe("usage report says a window is used up");
+  });
+
+  test("a used-up window with no model in its label skips every model", () => {
+    const weekly = { status: "ok", windows: [{ label: "Weekly", usedPercent: 100 }] };
+    expect(usageSkip(weekly, true, "gemini-4-argon")).toBe("usage report says a window is used up");
+    expect(usageSkip(weekly, true, "gemini-3.8-flash")).toBe("usage report says a window is used up");
+  });
 });
