@@ -67,6 +67,17 @@ interface AutoRecord {
 export default async function plugin(bb: BbPluginApi) {
   const host = bb.hosts.experimental_client({ contract: hostContract, experimental_signals: hostSignals });
   const caches = new Map<string, Cache>();
+  const settings = bb.settings.define({
+    showBbCopilotSeats: {
+      type: "boolean",
+      label: "Show bb's own Copilot seats",
+      description: "Show Copilot seats logged in under ~/.config/gh-<key> (bb's acp-github-copilot-<key> agents), labeled with the key.",
+      default: false,
+    },
+  });
+  settings.onChange(() => {
+    for (const [id, c] of caches) if (c.local !== null) void attachMachines(id);
+  });
   // Every refresh of a machine after a trigger, one step apart; see src/schedule.ts.
   const refresher = new Refresher((id) => void refresh(id));
   let hostList: { at: number; hosts: HostRecord[]; primaryId: string | null; primaryPlatform: string | null } | null = null;
@@ -267,6 +278,7 @@ export default async function plugin(bb: BbPluginApi) {
           }
         }),
     );
+    const { showBbCopilotSeats } = await settings.get();
     const next = structuredClone(base);
     const snaps = new Map<string, Snapshot | null>();
     for (const machine of persistent) {
@@ -276,7 +288,7 @@ export default async function plugin(bb: BbPluginApi) {
       // The OS user comes from the live reading or the snapshot; the probe answers only when both lack one.
       const hasUser = (reading?.user ?? snap?.user ?? "") !== "";
       const fallbackUser = !hasUser && machine.status === "connected" ? (cache(machine.id).probe?.user ?? (await probeHost(machine.id))?.user ?? "") : "";
-      mergeMachine(next, machine, reading, snap, fallbackUser);
+      mergeMachine(next, machine, reading, snap, fallbackUser, { showProfileSeats: showBbCopilotSeats });
     }
     try {
       fillMatrixFromBurn(next, bb.server.experimental_dataDir, Date.now(), list.hosts.map((h) => ({ id: h.id, name: h.name })));

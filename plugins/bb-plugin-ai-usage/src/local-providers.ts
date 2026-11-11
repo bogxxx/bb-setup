@@ -47,9 +47,21 @@ function meter(name: string, percentUsed: number, resetsAt: string | null, main:
   };
 }
 
-function card(name: string, device: string, windows: Window[], extra: Partial<TeamAccount> = {}): TeamAccount {
+/** The worst window's state; with no windows, the fallback. */
+export function stateOfWindows(windows: Window[], fallback: string): string {
+  if (windows.length === 0) return fallback;
   const worst = windows.reduce((s, w) => (w.percent > s ? w.percent : s), 0);
-  const state = windows.length === 0 ? (extra.state ?? "unknown") : worst >= 100 ? "out" : worst >= 80 ? "tight" : "ok";
+  return worst >= 100 ? "out" : worst >= 80 ? "tight" : "ok";
+}
+
+/** A window whose reset time has passed. An unknown or unparsable reset is never expired. */
+export function expired(resetsAt: string | null, now: number): boolean {
+  const t = resetsAt === null ? NaN : Date.parse(resetsAt);
+  return Number.isFinite(t) && t < now;
+}
+
+function card(name: string, device: string, windows: Window[], extra: Partial<TeamAccount> = {}): TeamAccount {
+  const state = stateOfWindows(windows, extra.state ?? "unknown");
   return {
     label: name,
     name,
@@ -345,6 +357,16 @@ function antigravityEmail(): string | null {
     return null;
   } finally {
     db.close();
+  }
+}
+
+/** The active Gemini CLI login's local part. It can differ from Antigravity's login. */
+function geminiActiveEmail(): string | null {
+  try {
+    const parsed = JSON.parse(readFileSync(path.join(os.homedir(), ".gemini", "google_accounts.json"), "utf8")) as { active?: unknown };
+    return typeof parsed.active === "string" ? emailLocal(parsed.active) : null;
+  } catch {
+    return null;
   }
 }
 
@@ -1011,9 +1033,8 @@ const ANTIGRAVITY_SIGNED_OUT = "Antigravity is installed, but its sign-in could 
 function antigravity(device: string): TeamAccount | null {
   if (antigravityCache !== null && Date.now() - antigravityAt < 5 * 60_000) return { ...antigravityCache, devices: [device] };
   const token = antigravityRefresh();
-  const email = antigravityMail;
   const agy = gravityAgyWindows(parseAgyQuota(agyQuotaText()));
-  if (token === null && email === null && agy.length === 0) {
+  if (token === null && antigravityMail === null && agy.length === 0) {
     if (!antigravityPresent()) return null;
     antigravityAt = Date.now();
     antigravityCache = card("Antigravity", device, [], { no_reading: ANTIGRAVITY_SIGNED_OUT });
@@ -1031,6 +1052,7 @@ function antigravity(device: string): TeamAccount | null {
   const buckets = quota?.buckets;
   const windows = joinGravityWindows(agy, gravityWindows(Array.isArray(buckets) ? buckets : [], Date.now(), names), gravitySummaryWindows(summary));
   const planName = plan?.paidTier?.name || plan?.currentTier?.name || null;
+  const email = antigravityMail ?? geminiActiveEmail();
   const label = email ?? planName ?? "Gravity";
   antigravityAt = Date.now();
   antigravityCache = card(label, device, windows, {
@@ -1166,9 +1188,28 @@ function distinctEmailLogins(a: string, b: string): boolean {
   return isEmailName(x) && isEmailName(y) && x !== y;
 }
 
-/** The quota with each window marked stale as the quota is, so the card shows "~" for a stale reading. */
-function withStale(quota: Quota): Quota {
-  return { ...quota, windows: quota.windows.map((w) => ({ ...w, stale: quota.stale })) };
+/**
+ * The quota with each window marked stale as the quota is, so the card shows "~" for a stale reading.
+ * A stale quota drops the windows whose reset has passed; when that drops the main window, the first one left is main.
+ */
+function withStale(quota: Quota, now = Date.now()): Quota {
+  const kept = quota.stale ? quota.windows.filter((w) => !expired(w.resets_at, now)) : quota.windows;
+  const hasMain = kept.some((w) => w.main);
+  return { ...quota, windows: kept.map((w, i) => ({ ...w, stale: quota.stale, main: w.main || (!hasMain && i === 0) })) };
+}
+
+/**
+ * The winner's windows, plus the other reading's windows the winner lacks. Each window keeps its own stale mark,
+ * and an other reading's stale window whose reset has passed is dropped.
+ */
+function unionQuota(winner: Quota, other: Quota | null, now: number): Quota {
+  const base = withStale(winner, now);
+  if (other === null) return base;
+  const names = new Set(base.windows.map((w) => w.name));
+  const extra = other.windows
+    .filter((w) => !names.has(w.name) && !(other.stale && expired(w.resets_at, now)))
+    .map((w) => ({ ...w, main: false, stale: w.stale || other.stale }));
+  return { ...base, windows: [...base.windows, ...extra] };
 }
 
 /** Hostnames this report already uses as machine names. An account title that matches one is not a login. */
@@ -1264,6 +1305,78 @@ export interface HostLogin {
   windows: { name: string; percentUsed: number; resetsAt: string | null }[];
 }
 
+const PERIODS = ["today", "7d", "30d", "90d"] as const;
+
+function addUsage(a: Usage, b: Usage): Usage {
+  return { today: a.today + b.today, "7d": a["7d"] + b["7d"], "30d": a["30d"] + b["30d"], "90d": a["90d"] + b["90d"] };
+}
+
+function cellTotal(cell: MatrixCell | undefined): Usage {
+  return cell === undefined ? emptyUsage() : (cell.burn ?? cell.usage);
+}
+
+/** An `unknown` login with no quota: a Codex sign-in whose name could not be read. */
+function isUnknownPlaceholder(account: TeamAccount): boolean {
+  return account.name.trim().toLowerCase() === "unknown" && account.quota === null;
+}
+
+/** Moves the `unknown` matrix column's cells into the login's column, or renames the column when the login has none. */
+function foldMatrixColumn(report: Report, provider: string, keepName: string, dropName: string): void {
+  const matrix = report.team.matrix;
+  const from = matrix.columns.findIndex((c) => c.provider === provider && c.name === dropName);
+  if (from === -1) return;
+  const to = matrix.columns.findIndex((c) => c.provider === provider && c.name === keepName);
+  if (to === -1) {
+    matrix.columns[from]!.name = keepName;
+    return;
+  }
+  for (const row of matrix.rows) {
+    const kept = row.cells[to];
+    const dropped = row.cells[from];
+    if (kept === undefined || dropped === undefined) continue;
+    kept.usage = addUsage(cellTotal(kept), cellTotal(dropped));
+    kept.burn = null;
+    kept.burn_share = null;
+  }
+  const keptColumn = matrix.columns[to]!;
+  const droppedColumn = matrix.columns[from]!;
+  keptColumn.usage = addUsage(keptColumn.usage, droppedColumn.usage);
+  keptColumn.burn = keptColumn.burn === null && droppedColumn.burn === null ? null : addUsage(keptColumn.burn ?? emptyUsage(), droppedColumn.burn ?? emptyUsage());
+  matrix.columns.splice(from, 1);
+  for (const row of matrix.rows) row.cells.splice(from, 1);
+}
+
+/**
+ * An account named `unknown` with no quota is a Codex sign-in whose login could not be read. When its provider has
+ * exactly one known login, that login absorbs the placeholder's sessions, usage, burn, devices and matrix column.
+ * With none or with several, no login is guessed: the placeholder card goes and its matrix column stays.
+ */
+export function foldUnknownLogins(report: Report): void {
+  for (const group of report.team.providers) {
+    const placeholders = group.accounts.filter(isUnknownPlaceholder);
+    if (placeholders.length === 0) continue;
+    const logins = group.accounts.filter((a) => !isUnknownPlaceholder(a));
+    const login = logins.length === 1 ? logins[0]! : null;
+    for (const placeholder of placeholders) {
+      if (login !== null) {
+        login.sessions += placeholder.sessions;
+        for (const period of PERIODS) login.usage[period] += placeholder.usage[period];
+        if (login.burn !== null || placeholder.burn !== null) {
+          login.burn = addUsage(login.burn ?? emptyUsage(), placeholder.burn ?? emptyUsage());
+        }
+        if (placeholder.devices.some((d) => !login.devices.includes(d))) login.users += placeholder.users;
+        for (const device of placeholder.devices) login.devices = withDevice(login.devices, device);
+        const later = placeholder.last_active_at !== null && (login.last_active_at === null || Date.parse(placeholder.last_active_at) > Date.parse(login.last_active_at));
+        if (later) login.last_active_at = placeholder.last_active_at;
+        foldCost(report, group.provider, login.name, placeholder.name);
+        foldMatrixColumn(report, group.provider, login.name, placeholder.name);
+      }
+      group.accounts = group.accounts.filter((a) => a !== placeholder);
+    }
+  }
+  report.team.providers = report.team.providers.filter((group) => group.accounts.length > 0);
+}
+
 function asLogin(provider: string, account: TeamAccount): HostLogin {
   return {
     provider,
@@ -1305,7 +1418,7 @@ function hostOf(name: string): string {
  */
 export function mergeMeasured(
   report: Report,
-  measured: { hostName: string; user: string; providers: { provider: string; name: string; plan: string | null; windows: { name: string; percentUsed: number; resetsAt: string | null }[] }[] },
+  measured: { hostName: string; user: string; providers: { provider: string; name: string; plan: string | null; windows: { name: string; percentUsed: number; resetsAt: string | null }[]; profile?: string }[] },
   options: { measuredAt?: number; aliases?: string[] } = {},
 ): void {
   const deviceName = measured.hostName;
@@ -1349,11 +1462,18 @@ export function mergeMeasured(
   const hosts = hostLabels(report, deviceName);
   for (const provider of measured.providers) {
     if (provider.name.trim() === "") continue;
-    const windows = provider.windows.map((w, i) => meter(w.name, w.percentUsed, w.resetsAt, i === 0));
+    // A stale reading's window whose reset has passed says nothing now; a live reading keeps every window it reports.
+    const now = Date.now();
+    const current = provider.windows.filter((w) => !(stale && expired(w.resetsAt, now)));
+    const windows = current.map((w, i) => meter(w.name, w.percentUsed, w.resetsAt, i === 0));
+    // Every window of a stale reading has reset: that login has nothing to show, so it adds no card.
+    const allExpired = stale && provider.windows.length > 0 && windows.length === 0;
     const account = card(provider.name, shownOn, windows, {
       plan: provider.plan,
       no_reading: windows.length === 0 ? "Signed in. No limit reading yet." : null,
     });
+    // A second Copilot seat is named for its key, so it is not mistaken for the default login.
+    if (provider.profile !== undefined) account.label = `${provider.name} (gh-${provider.profile})`;
     if (stale && account.quota !== null) account.quota = withStale({ ...account.quota, stale: true, age_seconds: ageSeconds, observed_at: seenAt! });
     const remember = () => {
       if (windows.length === 0) return;
@@ -1362,6 +1482,7 @@ export function mergeMeasured(
     };
     const group = report.team.providers.find((p) => p.provider === provider.provider);
     if (group === undefined) {
+      if (allExpired) continue;
       report.team.providers.push({ provider: provider.provider, accounts: [account] });
       remember();
       continue;
@@ -1380,8 +1501,13 @@ export function mergeMeasured(
     // The login wins over a machine name when both describe one quota.
     const existing = candidates.find((a) => !hosts.has(a.name.toLowerCase())) ?? candidates[0];
     if (existing === undefined) {
+      if (allExpired) continue;
       group.accounts.push(account);
       remember();
+      continue;
+    }
+    if (allExpired) {
+      existing.devices = withDevice(existing.devices, shownOn);
       continue;
     }
     // A hostname repeating a quota already shown under a login is not a second subscription.
@@ -1403,10 +1529,14 @@ export function mergeMeasured(
         // The same numbers, read later: keep the windows, take the newer time and its stale marks.
         existing.quota = withStale({ ...existing.quota, observed_at: account.quota.observed_at, age_seconds: account.quota.age_seconds, stale: account.quota.stale, device: account.quota.device });
       } else {
-        existing.quota = withStale(account.quota);
+        existing.quota = unionQuota(account.quota, existing.quota, now);
         existing.plan = account.plan ?? existing.plan;
-        existing.state = account.state;
+        existing.state = stateOfWindows(existing.quota.windows, account.state);
       }
+    } else if (windows.length > 0 && account.quota !== null && existing.quota !== null) {
+      // An older reading keeps the newer numbers; it still adds the windows the newer one does not report.
+      existing.quota = unionQuota(existing.quota, account.quota, now);
+      existing.state = stateOfWindows(existing.quota.windows, existing.state);
     }
     existing.devices = withDevice(existing.devices, shownOn);
     group.accounts = group.accounts.filter((other) => {

@@ -46,3 +46,41 @@ console.log(JSON.stringify(quotaLogins().filter((login) => login.provider === "a
     rmSync(home, { recursive: true, force: true });
   }
 }, 60_000);
+
+// The Gemini CLI's active login names Gravity when Antigravity's own sign-in cannot be read.
+function gravityWithHome(home: string): { name: string }[] {
+  const module = path.join(import.meta.dir, "../src/local-providers.ts");
+  const script = `import { quotaLogins } from ${JSON.stringify(module)};
+console.log(JSON.stringify(quotaLogins().filter((login) => login.provider === "antigravity")));`;
+  const run = spawnSync(process.execPath, ["-e", script], { env: { ...process.env, HOME: home }, encoding: "utf8", timeout: 60_000 });
+  expect(run.status).toBe(0);
+  return JSON.parse(String(run.stdout).trim().split("\n").pop()!) as { name: string }[];
+}
+
+test("agy with no Antigravity sign-in: the Gravity card is named for the active Gemini CLI login", () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "agy-gemini-"));
+  try {
+    const fixture = path.join(home, "quota.txt");
+    writeFileSync(fixture, "Gemini Models\tWeekly Limit Remaining\t100%\t2026-11-14T21:50:50Z\n");
+    mkdirSync(path.join(home, ".local", "bin"), { recursive: true });
+    const agy = path.join(home, ".local", "bin", "agy");
+    writeFileSync(agy, `#!/bin/sh\ncat '${fixture}'\n`);
+    chmodSync(agy, 0o755);
+    mkdirSync(path.join(home, ".gemini"), { recursive: true });
+    writeFileSync(path.join(home, ".gemini", "google_accounts.json"), JSON.stringify({ active: "someone.x@example.com", old: [] }));
+    expect(gravityWithHome(home).map((login) => login.name)).toEqual(["someone.x"]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("only the Gemini CLI's accounts file, with no Antigravity sign-in or agy: no Gravity card", () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "agy-gemini-only-"));
+  try {
+    mkdirSync(path.join(home, ".gemini"), { recursive: true });
+    writeFileSync(path.join(home, ".gemini", "google_accounts.json"), JSON.stringify({ active: "someone.x@example.com", old: [] }));
+    expect(gravityWithHome(home)).toEqual([]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 60_000);

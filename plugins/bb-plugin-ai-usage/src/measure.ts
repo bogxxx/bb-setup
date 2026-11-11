@@ -23,6 +23,8 @@ export interface MeasuredProvider {
   name: string;
   plan: string | null;
   windows: MeasuredWindow[];
+  /** The key of a Copilot seat logged in under ~/.config/gh-<key>; absent for the default login. */
+  profile?: string;
 }
 
 export interface MeasuredUsage {
@@ -414,6 +416,7 @@ async function measureNow(budgetMs: number): Promise<MeasuredUsage> {
         name: quota.name,
         plan: quota.plan,
         windows: quota.windows.map((w) => ({ name: w.name, percentUsed: w.percent, resetsAt: w.resets_at })),
+        profile: profile.key,
       });
     }
   } catch {

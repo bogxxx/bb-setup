@@ -101,7 +101,7 @@ export const measuredUsage = z
     hostName: z.string(),
     user: z.string(),
     providers: z.array(
-      z.object({ provider: z.string(), name: z.string(), plan: z.string().nullable(), windows: z.array(measuredWindow) }).strict(),
+      z.object({ provider: z.string(), name: z.string(), plan: z.string().nullable(), windows: z.array(measuredWindow), profile: z.string().optional() }).strict(),
     ),
     cursorTokens: cursorTokens.nullable().optional(),
   })
