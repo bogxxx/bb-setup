@@ -112,17 +112,22 @@ describe("profile Copilot seats", () => {
   const seat = (name: string, percent: number, profile?: string) => ({ provider: "copilot", name, plan: "business", windows: [window("premium", percent, FUTURE)], ...(profile === undefined ? {} : { profile }) });
   const live = { hostName: "host-seat", user: "u", providers: [seat("default-login", 10), seat("bohdan-krechko_ssgia", 55, "sopra")] };
 
-  test("a bb Copilot seat is hidden by default and shown with its key when the setting is on", () => {
-    const hidden = readReport(structuredClone(demoTeam));
-    mergeMachine(hidden, { id: "m1", name: "host-seat" }, live, null, "u");
-    const names = (r: Report) => r.team.providers.find((p) => p.provider === "copilot")!.accounts.map((a) => a.name);
-    expect(names(hidden)).toContain("default-login");
-    expect(names(hidden)).not.toContain("bohdan-krechko_ssgia");
-
+  test("a bb Copilot seat is shown by default, as its own card labeled with its key", () => {
     const shown = readReport(structuredClone(demoTeam));
-    mergeMachine(shown, { id: "m1", name: "host-seat" }, live, null, "u", { showProfileSeats: true });
+    mergeMachine(shown, { id: "m1", name: "host-seat" }, live, null, "u");
+    const names = (r: Report) => r.team.providers.find((p) => p.provider === "copilot")!.accounts.map((a) => a.name);
+    expect(names(shown)).toContain("default-login");
+    expect(names(shown)).toContain("bohdan-krechko_ssgia");
     const seatCard = shown.team.providers.find((p) => p.provider === "copilot")!.accounts.find((a) => a.name === "bohdan-krechko_ssgia")!;
     expect(seatCard.label).toBe("bohdan-krechko_ssgia (gh-sopra)");
+  });
+
+  test("a bb Copilot seat is left out when the setting is off", () => {
+    const hidden = readReport(structuredClone(demoTeam));
+    mergeMachine(hidden, { id: "m1", name: "host-seat" }, live, null, "u", { showProfileSeats: false });
+    const names = hidden.team.providers.find((p) => p.provider === "copilot")!.accounts.map((a) => a.name);
+    expect(names).toContain("default-login");
+    expect(names).not.toContain("bohdan-krechko_ssgia");
   });
 
   test("a stored snapshot with a seat is filtered the same way", () => {
@@ -131,6 +136,9 @@ describe("profile Copilot seats", () => {
     mergeMachine(report, { id: "m1", name: "host-seat" }, null, snap, "u");
     const names = report.team.providers.find((p) => p.provider === "copilot")!.accounts.map((a) => a.name);
     expect(names).toContain("default-login");
-    expect(names).not.toContain("bohdan-krechko_ssgia");
+    expect(names).toContain("bohdan-krechko_ssgia");
+    const off = readReport(structuredClone(demoTeam));
+    mergeMachine(off, { id: "m1", name: "host-seat" }, null, snap, "u", { showProfileSeats: false });
+    expect(off.team.providers.find((p) => p.provider === "copilot")!.accounts.map((a) => a.name)).not.toContain("bohdan-krechko_ssgia");
   });
 });

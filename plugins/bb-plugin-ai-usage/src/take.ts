@@ -17,7 +17,7 @@ type Providers = Parameters<typeof mergeMeasured>[1]["providers"];
 /**
  * Adds one machine to the report: its live reading, else its last snapshot marked with when it was seen,
  * and its matrix row. `fallbackUser` is used only when neither reading has an OS user.
- * A Copilot seat under bb's own gh-<key> folder is left out unless `showProfileSeats` is set.
+ * A Copilot seat under bb's own gh-<key> folder is shown, labeled `<name> (gh-<key>)`, unless `showProfileSeats` is false.
  */
 export function mergeMachine(
   report: Report,
@@ -27,7 +27,8 @@ export function mergeMachine(
   fallbackUser: string,
   options: { showProfileSeats?: boolean } = {},
 ): void {
-  const visible = (providers: Providers): Providers => (options.showProfileSeats ? providers : providers.filter((p) => p.profile === undefined));
+  const showSeats = options.showProfileSeats ?? true;
+  const visible = (providers: Providers): Providers => (showSeats ? providers : providers.filter((p) => p.profile === undefined));
   // A reading matches this machine by its BB name or the OS hostname it reports under, never by OS user.
   if (live !== null) mergeMeasured(report, { ...live, hostName: machine.name, providers: visible(live.providers) }, { aliases: [live.hostName] });
   else if (snap !== null) mergeMeasured(report, { hostName: machine.name, user: snap.user, providers: visible(snap.providers) }, { measuredAt: snap.at, aliases: snap.alias ? [snap.alias] : [] });

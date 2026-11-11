@@ -1,6 +1,6 @@
 // Cursor, Copilot, and Antigravity are not in `ai-usage report`. Each becomes
 // one subscription on the page: the bars are what is left, and when it resets.
-import { spawnSync } from "node:child_process";
+import { runSync } from "./sync-run.js";
 import { createRequire } from "node:module";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import os from "node:os";
@@ -87,7 +87,7 @@ function card(name: string, device: string, windows: Window[], extra: Partial<Te
 }
 
 function copilot(device: string): TeamAccount | null {
-  const gh = spawnSync(
+  const gh = runSync(
     "gh",
     ["api", "/copilot_internal/user", "--jq", "{plan:.copilot_plan,reset:.quota_reset_date_utc,premium:.quota_snapshots.premium_interactions}"],
     { encoding: "utf8", timeout: 20_000, windowsHide: true },
@@ -149,7 +149,7 @@ export function copilotProfileQuota(profile: CopilotProfile): { name: string; pl
   delete env.GITHUB_TOKEN;
   const limit = stepLimit(20_000);
   if (limit === null) return null;
-  const run = spawnSync("gh", ["api", "/copilot_internal/user"], { encoding: "utf8", timeout: limit, windowsHide: true, env });
+  const run = runSync("gh", ["api", "/copilot_internal/user"], { encoding: "utf8", timeout: limit, windowsHide: true, env });
   if (run.status !== 0 || !run.stdout.trim()) return null;
   let body: {
     login?: string;
@@ -194,7 +194,7 @@ function cursorAuthFile(): string | null {
 function cursorApi(token: string, method: string): Record<string, unknown> | null {
   const limit = stepLimit(20_000);
   if (limit === null) return null;
-  const res = spawnSync(
+  const res = runSync(
     curlBin(),
     [
       "-sS",
@@ -392,7 +392,7 @@ print(json.dumps({"email": data.get("id_token_email"), "access": token.get("acce
   if (limit === null) return null;
   let result: { status: number | null; stdout: string } | null = null;
   for (const bin of ["python", "py", "python3"]) {
-    const run = spawnSync(bin, ["-c", script], { encoding: "utf8", timeout: limit, windowsHide: true });
+    const run = runSync(bin, ["-c", script], { encoding: "utf8", timeout: limit, windowsHide: true });
     if (run.error) continue;
     result = run;
     break;
@@ -439,7 +439,7 @@ function keychainCredential(): { email: string | null; access: string | null; re
   if (process.platform !== "darwin") return null;
   const limit = stepLimit(5_000);
   if (limit === null) return null;
-  const run = spawnSync("security", ["find-generic-password", "-s", "gemini", "-a", "antigravity", "-w"], {
+  const run = runSync("security", ["find-generic-password", "-s", "gemini", "-a", "antigravity", "-w"], {
     encoding: "utf8",
     timeout: limit,
     windowsHide: true,
@@ -491,7 +491,7 @@ function refreshAccess(refresh: string): string | null {
   });
   const limit = stepLimit(20_000);
   if (limit === null) return null;
-  const res = spawnSync("curl", ["-sS", "-X", "POST", "https://oauth2.googleapis.com/token", "-d", body.toString()], {
+  const res = runSync("curl", ["-sS", "-X", "POST", "https://oauth2.googleapis.com/token", "-d", body.toString()], {
     encoding: "utf8",
     timeout: limit,
     windowsHide: true,
@@ -540,7 +540,7 @@ function antigravityRefresh(): string | null {
 function postJson(url: string, token: string): unknown {
   const limit = stepLimit(20_000);
   if (limit === null) return null;
-  const res = spawnSync(
+  const res = runSync(
     "curl",
     ["-sS", "-X", "POST", url, "-H", `Authorization: Bearer ${token}`, "-H", "Content-Type: application/json", "-H", "User-Agent: antigravity", "-d", "{}"],
     { encoding: "utf8", timeout: limit, windowsHide: true },
@@ -874,7 +874,7 @@ function agyQuotaText(): string {
   const local = localAppData();
   const candidates = [path.join(home, ".local", "bin", "agy"), local === undefined ? "" : path.join(local, "agy", "bin", "agy.exe")];
   const bin = candidates.find((file) => file !== "" && existsSync(file)) ?? "agy";
-  const run = spawnSync(bin, ["-p", "/quota"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: limit, windowsHide: true });
+  const run = runSync(bin, ["-p", "/quota"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: limit, windowsHide: true });
   if (run.error !== undefined || run.status !== 0) return "";
   return String(run.stdout ?? "");
 }

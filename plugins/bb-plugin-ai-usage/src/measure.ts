@@ -1,7 +1,7 @@
 // Usage that ai-usage does not collect, measured on the machine where the
 // login lives. Codex is the ChatGPT rate-limit endpoint. Copilot is the
 // GitHub account stored by the Copilot app, not the gh CLI.
-import { spawnSync } from "node:child_process";
+import { runSync } from "./sync-run.js";
 import { EXTRAS_BUDGET_MS, startBudget, stepLimit } from "./budget.js";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -120,7 +120,7 @@ export const GH_COPILOT_JQ =
 function copilotGh(): MeasuredProvider | null {
   const limit = stepLimit(20_000);
   if (limit === null) return null;
-  const run = spawnSync("gh", ["api", "copilot_internal/user", "--jq", GH_COPILOT_JQ], { encoding: "utf8", timeout: limit, windowsHide: true });
+  const run = runSync("gh", ["api", "copilot_internal/user", "--jq", GH_COPILOT_JQ], { encoding: "utf8", timeout: limit, windowsHide: true });
   if (run.error || run.status !== 0 || !run.stdout.trim()) return null;
   return copilotFromReading(run.stdout);
 }
@@ -197,7 +197,7 @@ print(json.dumps({"plan": body.get("copilot_plan"), "login": body.get("login"), 
   if (limit === null) return null;
   let result: { status: number | null; stdout: string } | null = null;
   for (const bin of ["python", "py", "python3"]) {
-    const run = spawnSync(bin, ["-c", script], { encoding: "utf8", timeout: limit, windowsHide: true });
+    const run = runSync(bin, ["-c", script], { encoding: "utf8", timeout: limit, windowsHide: true });
     if (run.error) continue;
     result = run;
     break;

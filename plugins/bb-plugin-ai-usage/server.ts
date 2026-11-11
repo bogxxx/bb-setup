@@ -10,7 +10,7 @@ import { inviteMessage } from "./src/invite.js";
 import { teamSource, type TeamSource } from "./src/team-source.js";
 import { BusyError, Jobs } from "./src/jobs.js";
 import { withDeadline } from "./src/deadline.js";
-import { Refresher, refreshTargets } from "./src/schedule.js";
+import { Refresher, refreshTargets, retryWithBackoff } from "./src/schedule.js";
 import { autoInstallable, installRefusal, NOTHING_COLLECTED, phaseOf, shownPhase, type HostFacts } from "./src/phase.js";
 import { fillMatrixFromBurn, mergeCopilotColumns } from "./src/burn-matrix.js";
 import { applyCursorUsage } from "./src/cursor-usage.js";
@@ -71,15 +71,19 @@ export default async function plugin(bb: BbPluginApi) {
     showBbCopilotSeats: {
       type: "boolean",
       label: "Show bb's own Copilot seats",
-      description: "Show Copilot seats logged in under ~/.config/gh-<key> (bb's acp-github-copilot-<key> agents), labeled with the key.",
-      default: false,
+      description: "Show Copilot seats logged in under ~/.config/gh-<key> (bb's acp-github-copilot-<key> agents), each labeled <name> (gh-<key>). On by default; turn off to hide them.",
+      default: true,
     },
   });
   settings.onChange(() => {
     for (const [id, c] of caches) if (c.local !== null) void attachMachines(id);
   });
   // Every refresh of a machine after a trigger, one step apart; see src/schedule.ts.
-  const refresher = new Refresher((id) => void refresh(id));
+  // A start or connection refresh whose probe could not run (host calls are refused during plugin
+  // registration) is tried again after these waits, and no more.
+  const PROBE_RETRY_MS = [1_000, 2_000, 4_000, 8_000];
+  let disposed = false;
+  const refresher = new Refresher((id) => void refreshUntilProbed(id));
   let hostList: { at: number; hosts: HostRecord[]; primaryId: string | null; primaryPlatform: string | null } | null = null;
 
   const jobs = new Jobs({
@@ -154,9 +158,30 @@ export default async function plugin(bb: BbPluginApi) {
   function extrasOf(hostId: string): Promise<MeasuredUsage> {
     const out = extrasOut.get(hostId);
     if (out !== undefined) return out;
-    const call = callHost("extras", {}, { hostId, timeoutMs: 30_000 }).finally(() => extrasOut.delete(hostId));
+    const call = callHost("extras", {}, { hostId, timeoutMs: 30_000 })
+      .then((measured: MeasuredUsage) => {
+        logSlowExtras(labelOf(hostId), measured);
+        return measured;
+      })
+      .finally(() => extrasOut.delete(hostId));
     extrasOut.set(hostId, call);
     return call;
+  }
+
+  /** Refreshes a machine, and again after a backoff while it has no probe yet. Stops once the plugin is disposed. */
+  function refreshUntilProbed(hostId: string): Promise<void> {
+    return retryWithBackoff(
+      async () => {
+        await refresh(hostId);
+        return disposed || cache(hostId).probe !== null;
+      },
+      PROBE_RETRY_MS,
+      (ms) =>
+        new Promise((resolve) => {
+          bb.log.info(`probe of ${labelOf(hostId)} did not run; trying again in ${ms / 1000} s`);
+          setTimeout(resolve, ms);
+        }),
+    ).then(() => undefined);
   }
 
   function probeHost(hostId: string, force = false): Promise<Probe | null> {
@@ -283,7 +308,6 @@ export default async function plugin(bb: BbPluginApi) {
         .map(async (machine) => {
           try {
             const measured = await extrasOf(machine.id);
-            logSlowExtras(machine.name, measured);
             const previous = await bb.storage.kv.get<Snapshot>(`snapshot:${machine.id}`);
             // A skipped composer read leaves the key off. Keep the last windows; an explicit null means no database.
             const cursorTokens = measured.cursorTokens === undefined ? (previous?.cursorTokens ?? null) : measured.cursorTokens;
@@ -737,6 +761,7 @@ export default async function plugin(bb: BbPluginApi) {
   });
 
   bb.onDispose(() => {
+    disposed = true;
     clearTimeout(startRefresh);
     unsubscribeHosts();
     refresher.dispose();

@@ -60,3 +60,19 @@ export class Refresher {
     this.timers.clear();
   }
 }
+
+/**
+ * Runs `attempt` until it reports done. After each attempt that is not done, waits the next of `delaysMs`
+ * and tries again; after the last delay it gives up. Resolves to whether an attempt was done.
+ */
+export async function retryWithBackoff(
+  attempt: () => Promise<boolean>,
+  delaysMs: readonly number[],
+  wait: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+): Promise<boolean> {
+  for (let i = 0; ; i++) {
+    if (await attempt()) return true;
+    if (i >= delaysMs.length) return false;
+    await wait(delaysMs[i]!);
+  }
+}
