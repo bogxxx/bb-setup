@@ -142,6 +142,24 @@ export function copilotProfiles(): CopilotProfile[] {
   return out;
 }
 
+export interface CopilotSnapshot {
+  unlimited?: boolean;
+  has_quota?: boolean;
+  entitlement?: number;
+  percent_remaining?: number;
+}
+
+/**
+ * The percent used of one Copilot quota snapshot, or null when it is not a limit to show. Unlimited snapshots are
+ * dropped. has_quota is not checked: a token-billed seat reports has_quota false with remaining 0 and a real
+ * entitlement, and that reads as fully used. The gh jq filter and the Windows Python script apply the same rule.
+ */
+export function copilotPercentUsed(snap: CopilotSnapshot | undefined): number | null {
+  if (snap === undefined || snap.unlimited === true) return null;
+  if (num(snap.entitlement) <= 0 || typeof snap.percent_remaining !== "number") return null;
+  return 100 - snap.percent_remaining;
+}
+
 /** The Copilot quota of a profile's account, or null when it has no seat or gh cannot reach GitHub. */
 export function copilotProfileQuota(profile: CopilotProfile): { name: string; plan: string | null; windows: Window[] } | null {
   const env: Record<string, string | undefined> = { ...process.env, GH_CONFIG_DIR: profile.dir };
@@ -155,7 +173,7 @@ export function copilotProfileQuota(profile: CopilotProfile): { name: string; pl
     login?: string;
     copilot_plan?: string;
     quota_reset_date_utc?: string;
-    quota_snapshots?: Record<string, { unlimited?: boolean; has_quota?: boolean; entitlement?: number; percent_remaining?: number } | undefined>;
+    quota_snapshots?: Record<string, CopilotSnapshot | undefined>;
   };
   try {
     body = JSON.parse(run.stdout);
@@ -166,9 +184,9 @@ export function copilotProfileQuota(profile: CopilotProfile): { name: string; pl
   if (name === "") return null;
   const windows: Window[] = [];
   for (const [label, snap] of Object.entries(body.quota_snapshots ?? {})) {
-    if (snap === undefined || snap.unlimited || !snap.has_quota || num(snap.entitlement) <= 0) continue;
-    if (typeof snap.percent_remaining !== "number") continue;
-    windows.push(meter(label, 100 - snap.percent_remaining, body.quota_reset_date_utc ?? null, windows.length === 0));
+    const used = copilotPercentUsed(snap);
+    if (used === null) continue;
+    windows.push(meter(label, used, body.quota_reset_date_utc ?? null, windows.length === 0));
   }
   return windows.length === 0 ? null : { name, plan: body.copilot_plan ?? null, windows };
 }

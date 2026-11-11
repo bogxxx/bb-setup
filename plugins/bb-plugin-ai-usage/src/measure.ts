@@ -114,7 +114,7 @@ function copilot(): MeasuredProvider | null {
 
 /** The gh jq filter: the plan, the login, and each quota window the account has, in the reader's shape. */
 export const GH_COPILOT_JQ =
-  '. as $b | {plan: .copilot_plan, login: .login, windows: [(.quota_snapshots // {}) | to_entries[] | select(.value.unlimited != true and .value.has_quota == true and ((.value.entitlement // 0) > 0) and (.value.percent_remaining | type) == "number") | {name: .key, percentUsed: (100 - .value.percent_remaining), resetsAt: $b.quota_reset_date_utc}]}';
+  '. as $b | {plan: .copilot_plan, login: .login, windows: [(.quota_snapshots // {}) | to_entries[] | select(.value.unlimited != true and ((.value.entitlement // 0) > 0) and (.value.percent_remaining | type) == "number") | {name: .key, percentUsed: (100 - .value.percent_remaining), resetsAt: $b.quota_reset_date_utc}]}';
 
 /** Copilot on macOS and Linux: gh asks the same endpoint with its login. */
 function copilotGh(): MeasuredProvider | null {
@@ -184,7 +184,7 @@ with urllib.request.urlopen(req, timeout=20) as r:
 snaps = body.get("quota_snapshots") or {}
 windows = []
 for name, snap in snaps.items():
-    if not isinstance(snap, dict) or snap.get("unlimited") or not snap.get("has_quota"): continue
+    if not isinstance(snap, dict) or snap.get("unlimited"): continue
     entitlement = snap.get("entitlement") or 0
     if entitlement <= 0: continue
     remaining = snap.get("percent_remaining")
