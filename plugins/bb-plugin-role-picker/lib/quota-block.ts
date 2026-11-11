@@ -2,11 +2,18 @@
 // names a later reset, so one stale or long notice cannot hold reviews off that provider for days.
 export const QUOTA_BLOCK_CAP_MS = 6 * 60 * 60 * 1000;
 
-// A failure that means the provider cannot serve this review: quota, credits, spend limit, or login
-// (unauthorized) or a Copilot feature the account is not allowed to use (permission_denied).
-export const QUOTA_CATEGORIES = new Set(["rate-limit", "billing", "budget-exceeded", "unauthorized", "permission_denied"]);
+// A failure that means the provider cannot serve this review: quota, credits, spend limit, or login.
+export const QUOTA_CATEGORIES = new Set(["rate-limit", "billing", "budget-exceeded", "unauthorized"]);
 // The subset that describes the account rather than one model, so the whole provider is blocked.
-export const ACCOUNT_CATEGORIES = new Set(["billing", "budget-exceeded", "unauthorized", "permission_denied"]);
+export const ACCOUNT_CATEGORIES = new Set(["billing", "budget-exceeded", "unauthorized"]);
+
+/**
+ * A reviewer whose thread.start was refused: Copilot answers 403 "not authorized to use this Copilot
+ * feature" (category permission_denied), which is not a ProviderErrorInfo category, so it is read from text.
+ */
+export function isAccountFailureText(text: string): boolean {
+  return /permission_denied|not authorized to use|\bunauthorized\b|\b403\b/i.test(text);
+}
 
 export type QuotaBlock = { until: number; setAt: number };
 

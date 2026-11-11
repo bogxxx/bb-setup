@@ -19,6 +19,7 @@ import {
 import {
   ACCOUNT_CATEGORIES,
   blockKey,
+  isAccountFailureText,
   parseQuotaBlock,
   QUOTA_CATEGORIES,
   quotaBlockEnd,
@@ -773,6 +774,18 @@ export default async function plugin(bb: BbPluginApi) {
     // Billing, budget and login failures describe the account, so they block the whole provider.
     const scope = category && ACCOUNT_CATEGORIES.has(category) ? "provider" : "model";
     await moveReview(event.threadId, until, category ?? "rate limit", scope);
+  });
+
+  // A reviewer whose thread.start is refused never runs a turn, so turn.failed carries no errorInfo.
+  // Its refusal is a system/error event (and the thread's error text), so read those for a reviewer.
+  bb.events.on("thread.failed", async ({ thread, error }) => {
+    if (!(await kv.get(reviewKey(thread.id)))) return;
+    const rows = await bb.sdk.threads.events
+      .list({ threadId: thread.id, types: ["system/error"], order: "desc", limit: "5" })
+      .catch(() => []);
+    const texts = [error ?? "", ...rows.map((row) => JSON.stringify(row.data))];
+    if (!texts.some(isAccountFailureText)) return;
+    await moveReview(thread.id, Date.now() + DEFAULT_BLOCK_MS, "permission denied", "provider");
   });
 
   // Providers that report quota as a reply and complete the turn (Antigravity, Copilot).
