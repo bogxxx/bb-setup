@@ -13,8 +13,9 @@
     },
     {
       "id": "ai-usage",
-      "source": "path:/home/opc/src/bb-plugin-ai-usage",
-      "enabled": true
+      "source": "https://github.com/bogxxx/bb-setup.git",
+      "enabled": true,
+      "subdirectory": "plugins/bb-plugin-ai-usage"
     },
     {
       "id": "burn",
