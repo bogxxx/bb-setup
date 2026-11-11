@@ -16,7 +16,15 @@ import {
   parseAskArgs,
   parseAskInput,
 } from "./lib/ask.js";
-import { blockKey, parseQuotaBlock, quotaBlockEnd, reviewerModelKey, type QuotaBlock } from "./lib/quota-block.js";
+import {
+  ACCOUNT_CATEGORIES,
+  blockKey,
+  parseQuotaBlock,
+  QUOTA_CATEGORIES,
+  quotaBlockEnd,
+  reviewerModelKey,
+  type QuotaBlock,
+} from "./lib/quota-block.js";
 import { resolveReviewHostId, usageLimitsQuery, usageSkip } from "./lib/review-skip.js";
 
 export const ROLES = ["regular", "orchestrator", "interviewer"] as const;
@@ -177,9 +185,6 @@ function spawnSpec(parentProviderId: string, name: Exclude<SpawnName, "review">)
   return { providerId: parentProviderId };
 }
 
-// A failure that means the provider cannot serve this review: quota, credits, spend limit, or login.
-const QUOTA_CATEGORIES = new Set(["rate-limit", "billing", "budget-exceeded", "unauthorized"]);
-const ACCOUNT_CATEGORIES = new Set(["billing", "budget-exceeded", "unauthorized"]);
 const DEFAULT_BLOCK_MS = 60 * 60 * 1000;
 
 // Some providers do not fail the turn on quota: they reply with a short notice and complete the turn.

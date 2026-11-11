@@ -2,6 +2,12 @@
 // names a later reset, so one stale or long notice cannot hold reviews off that provider for days.
 export const QUOTA_BLOCK_CAP_MS = 6 * 60 * 60 * 1000;
 
+// A failure that means the provider cannot serve this review: quota, credits, spend limit, or login
+// (unauthorized) or a Copilot feature the account is not allowed to use (permission_denied).
+export const QUOTA_CATEGORIES = new Set(["rate-limit", "billing", "budget-exceeded", "unauthorized", "permission_denied"]);
+// The subset that describes the account rather than one model, so the whole provider is blocked.
+export const ACCOUNT_CATEGORIES = new Set(["billing", "budget-exceeded", "unauthorized", "permission_denied"]);
+
 export type QuotaBlock = { until: number; setAt: number };
 
 /** A stored block, or null for anything else (including the numeric entries older versions wrote). */
