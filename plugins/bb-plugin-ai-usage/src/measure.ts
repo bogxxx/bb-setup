@@ -36,6 +36,8 @@ export interface MeasuredUsage {
    * Omitted when the reading was skipped, so the last figure can stay.
    */
   cursorTokens?: Usage | null;
+  /** Milliseconds spent waiting for an earlier call on this machine, then in each step. */
+  timings?: { queued: number; steps: { step: string; ms: number }[] };
 }
 
 function windowName(seconds: number): string {
@@ -383,31 +385,48 @@ export function otherLogins(have: MeasuredProvider[]): MeasuredProvider[] {
 
 let queue: Promise<unknown> = Promise.resolve();
 
-/** Everything this machine can report about its logins. Settles within `budgetMs`; a step that cannot start in time is skipped. */
+/**
+ * Everything this machine can report about its logins. The budget runs from the call, not from when it
+ * starts: a call that waited behind an earlier one has less left. A call with too little left is refused,
+ * since an empty reading would replace the machine's logins; a step that cannot start in time is skipped.
+ */
 export function measureUsage(budgetMs = EXTRAS_BUDGET_MS): Promise<MeasuredUsage> {
+  const requestedAt = Date.now();
+  const deadline = requestedAt + budgetMs;
   // Calls run one at a time: the budget is shared state.
-  const next = queue.then(() => measureNow(budgetMs));
+  const next = queue.then(() => {
+    const queued = Date.now() - requestedAt;
+    if (deadline - Date.now() < MIN_CALL_MS) throw new Error(`extras refused: it waited ${Math.round(queued / 1000)} s behind an earlier call`);
+    return measureNow(deadline - Date.now(), queued);
+  });
   queue = next.catch(() => undefined);
   return next;
 }
 
-async function measureNow(budgetMs: number): Promise<MeasuredUsage> {
+/** Less than this left for a call is not enough to read anything. */
+const MIN_CALL_MS = 5_000;
+
+async function measureNow(budgetMs: number, queued: number): Promise<MeasuredUsage> {
   startBudget(budgetMs);
   const providers: MeasuredProvider[] = [];
   const push = (item: MeasuredProvider | null) => {
     if (item !== null) providers.push(item);
   };
-  try {
-    push(await codex());
-  } catch {
-    // This machine has no readable Codex login.
-  }
-  try {
-    push(copilot());
-  } catch {
-    // This machine has no readable Copilot login.
-  }
-  try {
+  const steps: { step: string; ms: number }[] = [];
+  // A step that throws contributes nothing; the others still count. Each step is timed either way.
+  const run = async (step: string, work: () => void | Promise<void>) => {
+    const began = Date.now();
+    try {
+      await work();
+    } catch {
+      // This step's login is not readable on this machine.
+    } finally {
+      steps.push({ step, ms: Date.now() - began });
+    }
+  };
+  await run("codex", async () => push(await codex()));
+  await run("copilot", () => push(copilot()));
+  await run("copilot profiles", () => {
     for (const profile of copilotProfiles()) {
       const quota = copilotProfileQuota(profile);
       if (quota === null) continue;
@@ -419,22 +438,18 @@ async function measureNow(budgetMs: number): Promise<MeasuredUsage> {
         profile: profile.key,
       });
     }
-  } catch {
-    // A second Copilot account did not answer.
-  }
-  try {
+  });
+  await run("quota logins", () => {
     for (const item of quotaLogins()) push(item);
-  } catch {
-    // Cursor or Gravity did not answer on this machine.
-  }
-  try {
+  });
+  await run("other logins", () => {
     for (const item of otherLogins(providers)) push(item);
-  } catch {
-    // A provider auth file was unreadable.
-  }
+  });
   // The composer scan is local. Skip it only when the budget is already gone,
   // and omit the field so a skipped read does not wipe the last figure.
-  const reading: MeasuredUsage = { hostName: os.hostname(), user: os.userInfo().username, providers };
-  if (stepLimit(5_000) !== null) reading.cursorTokens = readCursorUsage(Date.now());
+  const reading: MeasuredUsage = { hostName: os.hostname(), user: os.userInfo().username, providers, timings: { queued, steps } };
+  await run("cursor", () => {
+    if (stepLimit(5_000) !== null) reading.cursorTokens = readCursorUsage(Date.now());
+  });
   return reading;
 }

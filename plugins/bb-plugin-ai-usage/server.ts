@@ -146,6 +146,19 @@ export default async function plugin(bb: BbPluginApi) {
     return withDeadline(work, opts.timeoutMs + 5_000, label);
   }
 
+  /**
+   * The machine's extras call that is still out, if any. A refresh that comes meanwhile waits for it, so
+   * at most one extras call per machine is queued there; a call that is abandoned at its limit is forgotten.
+   */
+  const extrasOut = new Map<string, Promise<MeasuredUsage>>();
+  function extrasOf(hostId: string): Promise<MeasuredUsage> {
+    const out = extrasOut.get(hostId);
+    if (out !== undefined) return out;
+    const call = callHost("extras", {}, { hostId, timeoutMs: 30_000 }).finally(() => extrasOut.delete(hostId));
+    extrasOut.set(hostId, call);
+    return call;
+  }
+
   function probeHost(hostId: string, force = false): Promise<Probe | null> {
     const c = cache(hostId);
     if (!force && c.probe !== null && Date.now() - c.probedAt < PROBE_TTL) return Promise.resolve(c.probe);
@@ -243,6 +256,16 @@ export default async function plugin(bb: BbPluginApi) {
     }
   }
 
+  /** Logs where a slow extras call spent its time, as the host measured it. */
+  function logSlowExtras(name: string, measured: MeasuredUsage): void {
+    const timings = measured.timings;
+    if (timings === undefined) return;
+    const total = timings.queued + timings.steps.reduce((sum, s) => sum + s.ms, 0);
+    if (total < 10_000) return;
+    const steps = timings.steps.map((s) => `${s.step} ${(s.ms / 1000).toFixed(1)} s`).join(", ");
+    bb.log.info(`extras on ${name} took ${(total / 1000).toFixed(1)} s: waited ${(timings.queued / 1000).toFixed(1)} s, ${steps}`);
+  }
+
   /**
    * Adds every persistent machine to the local read: its logins, its matrix row and its burn. The work
    * runs on a copy that replaces the shown report only when it is complete, so the page never sees a
@@ -259,7 +282,8 @@ export default async function plugin(bb: BbPluginApi) {
         .filter((machine) => machine.status === "connected")
         .map(async (machine) => {
           try {
-            const measured = await callHost("extras", {}, { hostId: machine.id, timeoutMs: 30_000 });
+            const measured = await extrasOf(machine.id);
+            logSlowExtras(machine.name, measured);
             const previous = await bb.storage.kv.get<Snapshot>(`snapshot:${machine.id}`);
             // A skipped composer read leaves the key off. Keep the last windows; an explicit null means no database.
             const cursorTokens = measured.cursorTokens === undefined ? (previous?.cursorTokens ?? null) : measured.cursorTokens;
@@ -319,6 +343,7 @@ export default async function plugin(bb: BbPluginApi) {
     const c = cache(hostId);
     if (c.refreshing !== null) return c.refreshing;
     bb.log.info(`refresh of ${labelOf(hostId)} started`);
+    const started = Date.now();
     c.refreshing = (async () => {
       const probe = await probeHost(hostId);
       if (probe === null || probe.bin === null) {
@@ -335,7 +360,7 @@ export default async function plugin(bb: BbPluginApi) {
       .finally(() => {
         c.refreshing = null;
         c.reportCheckedAt = Date.now();
-        bb.log.info(`refresh of ${labelOf(hostId)} finished`);
+        bb.log.info(`refresh of ${labelOf(hostId)} finished in ${Math.round((Date.now() - started) / 1000)} s`);
         bb.realtime.publish("changed", { hostId });
       });
     return c.refreshing;

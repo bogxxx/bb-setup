@@ -38,18 +38,24 @@ describe("measureUsage budget", () => {
 
   test("a stalled provider does not hold the call past its budget", async () => {
     const started = Date.now();
-    const usage = await measureUsage(1500);
+    const usage = await measureUsage(6000);
     const took = Date.now() - started;
-    expect(took).toBeLessThan(4000);
+    expect(took).toBeLessThan(8000);
     expect(usage.providers.some((p) => p.provider === "codex")).toBe(false);
   }, 20_000);
 
-  test("with no budget left, no step starts", async () => {
+  test("a call with too little budget is refused, not answered with an empty reading", async () => {
     const started = Date.now();
-    const usage = await measureUsage(0);
+    await expect(measureUsage(0)).rejects.toThrow("extras refused");
     expect(Date.now() - started).toBeLessThan(1000);
-    expect(usage.providers.some((p) => p.provider === "codex")).toBe(false);
   });
+
+  test("time spent waiting behind an earlier call counts against the budget", async () => {
+    const first = measureUsage(6000);
+    const second = measureUsage(6000).then(() => "answered", (error: Error) => error.message);
+    await first;
+    expect(await second).toContain("waited");
+  }, 20_000);
 });
 
 describe("Copilot on every system", () => {

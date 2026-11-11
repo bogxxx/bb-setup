@@ -104,6 +104,11 @@ export const measuredUsage = z
       z.object({ provider: z.string(), name: z.string(), plan: z.string().nullable(), windows: z.array(measuredWindow), profile: z.string().optional() }).strict(),
     ),
     cursorTokens: cursorTokens.nullable().optional(),
+    /** How long the call waited behind an earlier one on this machine, and how long each step took. */
+    timings: z
+      .object({ queued: z.number(), steps: z.array(z.object({ step: z.string(), ms: z.number() }).strict()) })
+      .strict()
+      .optional(),
   })
   .strict();
 export type MeasuredUsage = z.infer<typeof measuredUsage>;
