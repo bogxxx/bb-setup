@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-role-picker",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test"

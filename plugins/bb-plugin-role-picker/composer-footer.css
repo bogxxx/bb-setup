@@ -55,4 +55,8 @@
     min-width: 0;
     max-width: 100%;
   }
+
+  [data-promptbox-main]:has([data-promptbox-action-row] > [data-promptbox-expanded-only] > [data-role-picker-slot]) [data-promptbox-editor-scroll] {
+    min-height: 2.75rem !important;
+  }
 }
