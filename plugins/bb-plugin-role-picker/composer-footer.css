@@ -31,3 +31,28 @@
   min-width: 0;
   flex: 1 1 auto;
 }
+
+@media (width < 48rem) {
+  [data-promptbox-action-row]:has(> [data-promptbox-expanded-only] > [data-role-picker-slot]) {
+    row-gap: 0.25rem;
+  }
+
+  [data-promptbox-action-row]:has(> [data-promptbox-expanded-only] > [data-role-picker-slot]) > [data-promptbox-expanded-only][data-promptbox-standard-actions] {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  [data-promptbox-action-row]:has(> [data-promptbox-expanded-only] > [data-role-picker-slot]) > [data-promptbox-standard-actions]:not([data-promptbox-expanded-only]) {
+    margin-left: auto;
+    justify-content: flex-end;
+  }
+
+  [data-promptbox-action-row]:has(> [data-promptbox-expanded-only] > [data-role-picker-slot]) [data-role-picker-slot] {
+    min-width: 0;
+  }
+
+  [data-promptbox-action-row]:has(> [data-promptbox-expanded-only] > [data-role-picker-slot]) [data-role-picker-slot] select {
+    min-width: 0;
+    max-width: 100%;
+  }
+}

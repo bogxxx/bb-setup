@@ -13,7 +13,7 @@
     },
     {
       "id": "ai-usage",
-      "source": "path:/home/opc/src/bb-setup/plugins/bb-plugin-ai-usage",
+      "source": "repo:plugins/bb-plugin-ai-usage",
       "enabled": true
     },
     {
@@ -49,6 +49,7 @@
     "bb--connect-next": true,
     "bb--git": true,
     "bb--github-pr-status": true,
+    "bb--github-star": true,
     "bb--mcp": false,
     "bb--prompt-library": true,
     "bb--provider-usage": true,
