@@ -74,3 +74,36 @@
     min-height: 3.75rem !important;
   }
 }
+
+@media (width < 48rem) {
+  [data-new-thread-footer] > :first-child {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  [data-new-thread-footer] > :first-child > [data-promptbox-project-control] {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+  }
+
+  [data-new-thread-footer] > :first-child > button:not([data-promptbox-project-control]) {
+    flex: 0 1 auto;
+    min-width: 1.75rem;
+    overflow: hidden;
+  }
+
+  [data-new-thread-footer] > :last-child {
+    flex-shrink: 0;
+  }
+
+  [data-new-thread-footer] > :last-child > * {
+    flex-shrink: 0;
+  }
+
+  [data-new-thread-footer] > :last-child > [aria-label="Branch"] {
+    max-width: 7.5rem;
+    overflow: hidden;
+  }
+}
