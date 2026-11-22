@@ -155,8 +155,58 @@
   }
 }
 
-@media (width < 24rem) {
+
+@media (width < 48rem) {
+  [data-follow-up-composer] [data-promptbox-editor-scroll] {
+    min-height: 1.5rem !important;
+    padding-top: 0.5rem;
+    padding-bottom: 0.25rem;
+  }
+
+  [data-follow-up-composer] [data-promptbox-action-row] {
+    padding-top: 0;
+    padding-bottom: 0.25rem;
+  }
+
+  [data-follow-up-composer-footer] {
+    padding-top: 0;
+    padding-bottom: 0;
+    row-gap: 0;
+  }
+
+  [data-follow-up-composer-footer] button {
+    min-height: 2rem !important;
+    height: 2rem !important;
+  }
+
+  [data-follow-up-composer-footer] button[aria-label^="Thread details"] > span {
+    display: none;
+  }
+
+  [data-follow-up-composer-footer] > :last-child {
+    gap: 4px;
+  }
+
+  [data-follow-up-composer-footer] > :first-child button {
+    max-width: 4rem;
+  }
+
+  [data-follow-up-composer-footer] > :first-child {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  [data-follow-up-composer-footer] [data-role-picker-slot] select {
+    width: 4.5rem;
+  }
+
   [data-follow-up-composer-footer] button[aria-label^="Context window"] > span:first-child {
+    display: none;
+  }
+}
+
+@media (width < 24rem) {
+  [data-follow-up-composer-footer] button[aria-label="Permission mode"] > svg {
     display: none;
   }
 }
