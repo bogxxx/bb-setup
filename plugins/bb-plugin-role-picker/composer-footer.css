@@ -108,3 +108,55 @@
     overflow: hidden;
   }
 }
+
+@media (width < 48rem) {
+  [data-follow-up-composer-footer] > :first-child {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  [data-follow-up-composer-footer] > :first-child button {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  [data-follow-up-composer-footer] > :first-child button > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  [data-follow-up-composer-footer] > :last-child {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    gap: 6px;
+    margin-left: auto;
+  }
+
+  [data-follow-up-composer-footer] > :last-child > * {
+    flex-shrink: 0;
+  }
+
+  [data-follow-up-composer-footer] [data-role-picker-slot] > label > span:first-child {
+    display: none;
+  }
+
+  [data-follow-up-composer-footer] [data-role-picker-slot] select {
+    width: 5.5rem;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  [data-follow-up-composer-footer] button[aria-label^="Thread cost"] [data-suffix="delta"] {
+    display: none;
+  }
+}
+
+@media (width < 24rem) {
+  [data-follow-up-composer-footer] button[aria-label^="Context window"] > span:first-child {
+    display: none;
+  }
+}
