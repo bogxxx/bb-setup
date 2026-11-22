@@ -110,53 +110,6 @@
 }
 
 @media (width < 48rem) {
-  [data-follow-up-composer-footer] > :first-child {
-    flex: 1 1 100%;
-    min-width: 0;
-  }
-
-  [data-follow-up-composer-footer] > :first-child button {
-    min-width: 0;
-    max-width: 100%;
-  }
-
-  [data-follow-up-composer-footer] > :first-child button > span {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  [data-follow-up-composer-footer] > :last-child {
-    flex: 0 0 auto;
-    flex-wrap: nowrap;
-    gap: 6px;
-    margin-left: auto;
-  }
-
-  [data-follow-up-composer-footer] > :last-child > * {
-    flex-shrink: 0;
-  }
-
-  [data-follow-up-composer-footer] [data-role-picker-slot] > label > span:first-child {
-    display: none;
-  }
-
-  [data-follow-up-composer-footer] [data-role-picker-slot] select {
-    width: 5.5rem;
-    min-width: 0;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  [data-follow-up-composer-footer] button[aria-label^="Thread cost"] [data-suffix="delta"] {
-    display: none;
-  }
-}
-
-
-@media (width < 48rem) {
   [data-follow-up-composer] [data-promptbox-editor-scroll] {
     min-height: 1.5rem !important;
     padding-top: 0.5rem;
@@ -174,6 +127,34 @@
     row-gap: 0;
   }
 
+  [data-follow-up-composer-footer] > :first-child {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  [data-follow-up-composer-footer] > :first-child button {
+    min-width: 0;
+    max-width: 4rem;
+  }
+
+  [data-follow-up-composer-footer] > :first-child button > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  [data-follow-up-composer-footer] > :last-child {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    gap: 4px;
+    margin-left: auto;
+  }
+
+  [data-follow-up-composer-footer] > :last-child > * {
+    flex-shrink: 0;
+  }
+
   [data-follow-up-composer-footer] button {
     min-height: 2rem !important;
     height: 2rem !important;
@@ -183,21 +164,27 @@
     display: none;
   }
 
-  [data-follow-up-composer-footer] > :last-child {
-    gap: 4px;
+  [data-follow-up-composer-footer] [data-role-picker-slot] > label > span:first-child {
+    display: none;
   }
 
-  [data-follow-up-composer-footer] > :first-child button {
-    max-width: 4rem;
-  }
-
-  [data-follow-up-composer-footer] > :first-child {
-    flex: 1 1 0;
-    min-width: 0;
+  [data-follow-up-composer-footer] [data-role-picker-slot] > label {
+    height: 2rem;
+    min-height: 2rem;
   }
 
   [data-follow-up-composer-footer] [data-role-picker-slot] select {
     width: 4.5rem;
+    height: 2rem;
+    min-width: 0;
+    min-height: 2rem;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  [data-follow-up-composer-footer] button[aria-label^="Thread cost"] [data-suffix="delta"] {
+    display: none;
   }
 
   [data-follow-up-composer-footer] button[aria-label^="Context window"] > span:first-child {
