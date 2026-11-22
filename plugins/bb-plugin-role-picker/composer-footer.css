@@ -36,6 +36,7 @@
   [data-promptbox-action-row]:has(> [data-promptbox-expanded-only] > [data-role-picker-slot]) {
     flex-wrap: nowrap;
     align-items: center;
+    padding-bottom: 0.75rem;
   }
 
   [data-promptbox-action-row]:has(> [data-promptbox-expanded-only] > [data-role-picker-slot]) > [data-promptbox-expanded-only][data-promptbox-standard-actions] {
@@ -44,8 +45,7 @@
   }
 
   [data-promptbox-action-row]:has(> [data-promptbox-expanded-only] > [data-role-picker-slot]) > [data-promptbox-expanded-only][data-promptbox-standard-actions] > :not([data-role-picker-slot]) {
-    min-width: 0;
-    overflow: hidden;
+    flex-shrink: 0;
   }
 
   [data-promptbox-action-row]:has(> [data-promptbox-expanded-only] > [data-role-picker-slot]) > [data-promptbox-standard-actions]:not([data-promptbox-expanded-only]) {
@@ -55,22 +55,22 @@
   }
 
   [data-promptbox-action-row]:has(> [data-promptbox-expanded-only] > [data-role-picker-slot]) [data-role-picker-slot] {
-    flex: 0 0 auto;
+    flex: 0 1 6.5rem;
+    min-width: 0;
+  }
+
+  [data-promptbox-action-row]:has(> [data-promptbox-expanded-only] > [data-role-picker-slot]) [data-role-picker-slot] > label > span:first-child {
+    display: none;
   }
 
   [data-promptbox-action-row]:has(> [data-promptbox-expanded-only] > [data-role-picker-slot]) [data-role-picker-slot] select {
-    width: auto;
+    width: 100%;
     min-width: 0;
-    max-width: 8rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   [data-promptbox-main]:has([data-promptbox-action-row] > [data-promptbox-expanded-only] > [data-role-picker-slot]) [data-promptbox-editor-scroll] {
-    min-height: 2.75rem !important;
-  }
-}
-
-@media (width < 24rem) {
-  [data-promptbox-action-row]:has(> [data-promptbox-expanded-only] > [data-role-picker-slot]) [data-role-picker-slot] > label > span:first-child {
-    display: none;
+    min-height: 3.75rem !important;
   }
 }
