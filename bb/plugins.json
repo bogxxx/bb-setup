@@ -13,7 +13,7 @@
     },
     {
       "id": "ai-usage",
-      "source": "path:/home/opc/src/bb-setup/plugins/bb-plugin-ai-usage",
+      "source": "repo:plugins/bb-plugin-ai-usage",
       "enabled": true
     },
     {
@@ -58,7 +58,7 @@
     },
     {
       "id": "resource-monitor",
-      "source": "path:/home/opc/src/bb-setup/plugins/bb-plugin-resource-monitor",
+      "source": "repo:plugins/bb-plugin-resource-monitor",
       "enabled": true
     },
     {
@@ -69,17 +69,12 @@
     },
     {
       "id": "storage-cleaner",
-      "source": "path:/home/opc/src/bb-setup/plugins/bb-plugin-storage-cleaner",
+      "source": "repo:plugins/bb-plugin-storage-cleaner",
       "enabled": true
     },
     {
       "id": "superhuman",
-      "source": "path:/home/opc/src/bb-setup/plugins/bb-plugin-superhuman",
-      "enabled": true
-    },
-    {
-      "id": "thread-board",
-      "source": "path:/home/opc/src/bb-setup/plugins/bb-plugin-thread-board",
+      "source": "repo:plugins/bb-plugin-superhuman",
       "enabled": true
     }
   ],
