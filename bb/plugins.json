@@ -17,9 +17,32 @@
       "enabled": true
     },
     {
+      "id": "animation",
+      "source": "git:https://github.com/MacHatter1/bb-plugin-animation.git@semver:^0.1.0",
+      "enabled": true
+    },
+    {
+      "id": "auto-update",
+      "source": "git:https://github.com/rebryk/bb-plugins.git@semver:auto-update/:^0.1.0",
+      "enabled": true,
+      "subdirectory": "auto-update"
+    },
+    {
+      "id": "bookmarks",
+      "source": "git:https://github.com/rebryk/bb-plugins.git@semver:bookmarks/:^0.1.0",
+      "enabled": true,
+      "subdirectory": "bookmarks"
+    },
+    {
       "id": "burn",
       "source": "git:/home/opc/src/burn@d2e2da03137b36386ecbfdfd3afd8f1bbea35624",
       "enabled": true
+    },
+    {
+      "id": "canvas",
+      "source": "git:https://github.com/rebryk/bb-plugins.git@semver:canvas/:^0.1.0",
+      "enabled": true,
+      "subdirectory": "canvas"
     },
     {
       "id": "claude-subagents",
@@ -34,10 +57,22 @@
       "subdirectory": "plugins/loom"
     },
     {
+      "id": "resource-monitor",
+      "source": "git:https://github.com/rebryk/bb-plugins.git@semver:resource-monitor/:^0.1.0",
+      "enabled": true,
+      "subdirectory": "resource-monitor"
+    },
+    {
       "id": "role-picker",
       "source": "https://github.com/bogxxx/bb-setup.git",
       "enabled": true,
       "subdirectory": "plugins/bb-plugin-role-picker"
+    },
+    {
+      "id": "superhuman",
+      "source": "git:https://github.com/rebryk/bb-plugins.git@semver:superhuman/:^0.1.0",
+      "enabled": true,
+      "subdirectory": "superhuman"
     }
   ],
   "builtinsEnabled": {
@@ -81,6 +116,7 @@
     "scheduled-send": true,
     "secrets": true,
     "side-chat": true,
+    "simple-notes": true,
     "thread-list": true,
     "workflows": true
   }
