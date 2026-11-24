@@ -1,0 +1,94 @@
+/*
+ * BB's desktop app on macOS keeps a 44px row at the top of the window: back,
+ * forward and the sidebar's button over the sidebar, and over the page its
+ * header and the right panel's tabs, which BB lifts out of the card. With
+ * Hide Title Bar on, the row goes and the frame starts at its 8px lip; the
+ * header and the tabs open the card, and the keys for the other buttons still
+ * work. Other platforms and the browser have no such row.
+ */
+html[data-superhuman-no-title-bar] {
+  [data-testid="app-window-title-bar"] {
+    display: none;
+  }
+
+  [data-framed] {
+    padding-top: var(--bb-window-frame-lip);
+    --bb-window-frame-top: var(--bb-window-frame-lip);
+    /* The row's last buttons, now inside the card, keep its padding from the card's edge. */
+    --bb-title-bar-trailing-edge-gap: calc(var(--bb-panel-chrome-padding) + var(--bb-window-frame-lip));
+  }
+
+  /* The row was where a window is dragged; the lip above the frame is now. */
+  [data-testid="window-title-bar-drag-region"] {
+    height: var(--bb-window-frame-lip);
+  }
+
+  /* The card no longer reaches up into the row, and starts its background and the right panel's at its top. */
+  [data-framed] main[data-sidebar="inset"] {
+    margin-top: 0;
+    height: 100%;
+    mask-image: none;
+
+    &::before {
+      top: 0;
+    }
+
+    /* 1px lower, as BB has it, so the card's top border stays visible over the panel. */
+    aside::before {
+      top: 1px;
+    }
+  }
+
+  /* A split's inactive panes stay undimmed under their header, which BB measured by the row. */
+  [data-pane-focus-scrim][class*="top-[calc(var(--bb-window-frame-top)"] {
+    top: calc(var(--bb-window-title-bar-height) + 1px);
+  }
+
+  /* While the sidebar is closed, a page's title or the right panel's tabs no longer make room for the row's buttons. */
+  [class*="pl-[calc(var(--bb-window-title-bar-controls-end)"]:is(*, superhuman-pad) {
+    padding-left: 0;
+  }
+
+  /*
+   * macOS draws the window's buttons at the top left corner, over what starts
+   * there now. BB's row kept room for them, except in full screen, where they
+   * hide; the row, still in the page, tells which.
+   */
+  &:has([data-testid="app-window-title-bar"][class~="pl-(--bb-macos-traffic-light-reserve)"]) {
+    --superhuman-traffic-lights: 1;
+  }
+
+  @container style(--superhuman-traffic-lights: 1) {
+    /* The rail's Home starts below the buttons, and the room above it drags the window. */
+    [data-testid="app-nav-rail"]:is(*, superhuman-pad) {
+      padding-top: calc(var(--spacing, 0.25rem) * 4);
+
+      &::before {
+        content: "";
+        position: absolute;
+        inset: 0 0 auto;
+        height: calc(var(--spacing, 0.25rem) * 6);
+        app-region: drag;
+        -webkit-app-region: drag;
+      }
+    }
+
+    /* Without the rail, the sidebar's first row starts below them. */
+    [data-testid="app-sidebar-top-reserve-row"][class~="h-2"]:is(*, superhuman-pad) {
+      height: 1rem;
+    }
+
+    /*
+     * Beside them, New thread at the sidebar's top, or a page's title or the
+     * right panel's tabs while the sidebar is closed, start where BB's row
+     * started its buttons.
+     */
+    [data-testid="app-sidebar-top-reserve-row"]:is(*, superhuman-pad) {
+      padding-left: calc(var(--bb-macos-traffic-light-reserve) - var(--bb-window-card-collapsed-left));
+    }
+
+    [class*="pl-[calc(var(--bb-window-title-bar-controls-end)"]:is(*, superhuman-pad) {
+      padding-left: calc(var(--bb-macos-traffic-light-reserve) - var(--bb-window-card-collapsed-left) - 1rem);
+    }
+  }
+}

@@ -1,0 +1,85 @@
+/* controller.ts marks each control that gets a pill; the pill follows it. */
+[data-superhuman-key]::after {
+  content: attr(data-superhuman-key);
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font: 500 10px/1 var(--font-sans, system-ui);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: normal;
+  white-space: nowrap;
+  pointer-events: none;
+}
+[data-superhuman-anchor] {
+  position: relative;
+}
+/* Rows and options: over the trailing slot. Icon buttons: over the icon. */
+[data-superhuman-mode="end"]::after,
+[data-superhuman-mode="icon"]::after {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+}
+[data-sidebar-rename-row][data-superhuman-key]::after {
+  right: 6px;
+}
+/* BB draws a sticky parent row's shield with its ::after, in a rule that
+   outranks the pill's, which stretched the pill over the row's title. While
+   a pill shows, the pill wins; the shield returns when the modifier is up. */
+[data-sidebar-sticky-stack] [data-sidebar-sticky-tier][data-superhuman-key]::after {
+  content: attr(data-superhuman-key);
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  bottom: auto;
+  left: auto;
+  right: 6px;
+  width: auto;
+  height: 16px;
+  background-color: var(--muted);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+[data-superhuman-mode="icon"]::after {
+  right: auto;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+[data-superhuman-mode="icon"] {
+  overflow: visible !important;
+}
+[data-superhuman-mode="icon"] > *,
+[data-superhuman-mode="end"] [data-icon="Check"],
+[data-sidebar-rename-row][data-superhuman-key] > :last-child {
+  visibility: hidden;
+}
+[data-sidebar-rename-row][data-superhuman-key] > :last-child {
+  min-width: 28px;
+}
+/* New-thread controls: in the chevron's slot, so typing moves nothing. */
+[data-superhuman-mode="chevron"] > svg:last-child {
+  display: none;
+}
+/* Provider tabs: beside the icon. */
+[data-superhuman-mode="tab"] {
+  width: auto !important;
+  padding-inline: 4px !important;
+  gap: 4px;
+}
+/* BB's own delayed hints, while pills show the keys. They sit beside their
+   controls, and back and forward share one box before both buttons. */
+html[data-superhuman-hints] kbd[aria-hidden="true"].pointer-events-none,
+[data-superhuman-key] kbd[aria-hidden="true"].pointer-events-none,
+[data-superhuman-key] + kbd[aria-hidden="true"].pointer-events-none {
+  display: none !important;
+}

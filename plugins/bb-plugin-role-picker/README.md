@@ -1,5 +1,14 @@
 # bb-plugin-role-picker
 
+## Role control
+
+The composer's **Role** dropdown picks how a thread works: Regular, Orchestrator,
+or Prompt generator. **Alt+R** (Option+R on a Mac) moves to the next role and
+**Shift+Alt+R** to the previous one, by key position, so it works in any
+keyboard layout, as Alt+M, Alt+P and Alt+T cycle BB's model picker. With split
+panes it changes the composer that has focus. The dropdown declares the
+shortcut, so Superhuman shows it while Alt is held.
+
 A BB plugin that keeps a todo list. It shows every surface a plugin can own:
 
 - `server.ts` — the backend: a todo store in `bb.storage.kv`, RPC methods

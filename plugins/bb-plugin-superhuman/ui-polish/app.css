@@ -1,0 +1,59 @@
+/*
+ * Every rule here applies unless the UI Polish setting is off, which app.tsx
+ * marks on the page. :where() keeps the mark out of the rules' specificity.
+ */
+
+/* BB's external editor picker in the thread bar, with its menu. Commit stays. */
+:where(html:not([data-superhuman-ui-polish-off]))
+  [data-thread-header-workflow-actions]
+  > [data-thread-header-responsive-action]:has([aria-label^="Open workspace"]) {
+  display: none;
+}
+
+/*
+ * BB tints the icons in its bars in three tones, some near white and some
+ * gray, even within one bar, and fades the sidebar's a little more. Here they
+ * share one, the subtle foreground, and so do the icons of plugins that mark
+ * them as BB does, such as this plugin's buttons. Text such as the thread's
+ * title, the current page in the navigation rail, and the selected tab stay
+ * brighter, and other plugins' images keep their colors.
+ *
+ * The bars mark themselves for a style query, since `bar:has(…) svg` would
+ * restyle much of the page on every change. `:is(*, …)` keeps the rule's
+ * original specificity against San Francisco's icon colors.
+ */
+:where(html:not([data-superhuman-ui-polish-off]))
+  :is(
+    [data-testid="app-page-header-content-row"],
+    [data-testid="app-sidebar-trigger-overlay"],
+    main > div:has(> [aria-label*="right panel"]),
+    [data-testid="thread-secondary-panel-top-chrome"],
+    [data-testid="app-window-title-bar"],
+    [data-testid="app-nav-rail"],
+    [data-testid="app-sidebar-top-reserve-row"],
+    [data-testid="sidebar-footer-row"],
+    [data-sidebar="footer"]
+  ) {
+  --superhuman-icon-bar: 1;
+}
+
+@container style(--superhuman-icon-bar: 1) {
+  :is(button, a):not([aria-pressed="true"], [aria-current="page"], [data-active="true"], [role="checkbox"])
+    svg[data-icon-root]:is(*, superhuman-pad superhuman-pad.superhuman-pad) {
+    color: var(--subtle-foreground);
+    /* Over the fade of the sidebar's footer. */
+    opacity: 1 !important;
+  }
+}
+
+/*
+ * BB wraps some icons, such as the thread info panel's Environment icon, in a
+ * sized box that is at least as big as the icon. The icon fills the box, so
+ * Safari takes the icon's own 24px for the box's least size, and the box
+ * pushes the label aside. The box keeps the size BB gives it.
+ */
+:where(html:not([data-superhuman-ui-polish-off]))
+  span.min-w-max.min-h-max[class*="size-"]:has(> svg.size-full) {
+  min-width: 0;
+  min-height: 0;
+}

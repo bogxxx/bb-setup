@@ -1,0 +1,4 @@
+/* A button that a setting turns off leaves an empty group, which takes no gap in the header. */
+[data-bb-plugin="superhuman"] > span[role="group"]:empty {
+  display: none;
+}

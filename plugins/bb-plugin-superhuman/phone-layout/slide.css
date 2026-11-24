@@ -1,0 +1,20 @@
+/*
+ * On a phone the right panel keeps the screen's width and slides in beside
+ * the page, which BB slides out, instead of growing from the screen's right
+ * edge. Its content lays out once, at its final size.
+ */
+html[data-phone-layout] [data-testid="secondary-panel-shelf"] {
+  width: 100%;
+  border-left-width: 0;
+
+  &[data-state="closed"] {
+    translate: 100% 0;
+    /*
+     * BB's closed panel only waits to hide; this one slides out with the
+     * page first.
+     */
+    transition:
+      translate 220ms cubic-bezier(0.32, 0.72, 0, 1),
+      visibility 0s linear 220ms;
+  }
+}

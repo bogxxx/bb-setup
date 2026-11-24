@@ -6,6 +6,7 @@ import { QuestionForm } from "./components/ui/question-form";
 import type { Question } from "./components/ui/question-form-state";
 import type { Role, rpcContract } from "./server";
 import "./composer-footer.css";
+import { cycleRole, isRoleShortcut } from "./lib/role-shortcut";
 
 // The rendererId bb roles ask passes to bb.ui.requestInput (ASK_RENDERER_ID in lib/ask.ts).
 const ASK_RENDERER_ID = "ask";
@@ -23,9 +24,30 @@ function threadIdOf(scope: { kind: string; threadId?: string }): string | null {
   return null;
 }
 
+const visible = (element: Element) =>
+  element.checkVisibility?.() ?? element.getClientRects().length > 0;
+
+/**
+ * The Role control the shortcut changes: the one in the composer that has
+ * focus, else the first one on screen, as with split panes.
+ */
+function shortcutTarget(): HTMLSelectElement | undefined {
+  const selects = Array.from(document.querySelectorAll<HTMLSelectElement>("select[data-role-picker-select]")).filter(visible);
+  const active = document.activeElement;
+  return (
+    selects.find((select) => {
+      const shell = select.closest("[data-promptbox-shell], [data-follow-up-composer]");
+      return !!active && !!shell?.contains(active);
+    }) ?? selects[0]
+  );
+}
+
 function RoleSelect({ threadId }: { threadId: string | null }) {
   const rpc = useRpc<typeof rpcContract>();
   const [role, setRole] = useState<Role>("regular");
+  const select = useRef<HTMLSelectElement>(null);
+  const current = useRef(role);
+  current.current = role;
 
   const load = useCallback(() => {
     rpc.call("get_role", { threadId }).then(
@@ -38,18 +60,40 @@ function RoleSelect({ threadId }: { threadId: string | null }) {
     load();
   }, [load]);
 
+  const choose = useCallback(
+    (next: Role) => {
+      const previous = current.current;
+      setRole(next);
+      rpc.call("set_role", { threadId, role: next }).catch(() => setRole(previous));
+    },
+    [rpc, threadId],
+  );
+
+  // Alt+R cycles the role, as Alt+M, Alt+P and Alt+T cycle BB's model picker.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!isRoleShortcut(event) || event.defaultPrevented) return;
+      if (shortcutTarget() !== select.current) return;
+      event.preventDefault();
+      event.stopPropagation();
+      choose(cycleRole(current.current, event.shiftKey));
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [choose]);
+
   return (
-    <label className="flex h-6 items-center gap-1.5 text-xs text-muted-foreground">
+    <label className="flex h-6 items-center gap-1.5 text-xs text-muted-foreground" title="Role (Alt+R, Shift+Alt+R back)">
       <span>Role</span>
       <select
+        ref={select}
         aria-label="Role"
+        aria-keyshortcuts="Alt+R Alt+Shift+R"
+        data-role-picker-select=""
         className="h-6 max-w-36 rounded-md border border-border bg-background px-1.5 text-xs text-foreground"
         value={role}
         onChange={(event) => {
-          const next = ROLE_OPTIONS.find((option) => option.value === event.target.value)?.value ?? "regular";
-          const previous = role;
-          setRole(next);
-          rpc.call("set_role", { threadId, role: next }).catch(() => setRole(previous));
+          choose(ROLE_OPTIONS.find((option) => option.value === event.target.value)?.value ?? "regular");
         }}
       >
         {ROLE_OPTIONS.map((option) => (
