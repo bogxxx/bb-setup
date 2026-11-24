@@ -53,7 +53,7 @@
     {
       "id": "loom",
       "source": "git:https://github.com/kalindudc/bb-marketplace.git@semver:loom/:>=0.1.0 <1.0.0",
-      "enabled": true,
+      "enabled": false,
       "subdirectory": "plugins/loom"
     },
     {
@@ -67,6 +67,11 @@
       "source": "https://github.com/bogxxx/bb-setup.git",
       "enabled": true,
       "subdirectory": "plugins/bb-plugin-role-picker"
+    },
+    {
+      "id": "storage-cleaner",
+      "source": "repo:plugins/bb-plugin-storage-cleaner",
+      "enabled": true
     },
     {
       "id": "superhuman",

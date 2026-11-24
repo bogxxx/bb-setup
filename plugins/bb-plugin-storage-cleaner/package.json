@@ -1,0 +1,65 @@
+{
+  "name": "bb-plugin-storage-cleaner",
+  "version": "0.2.0",
+  "type": "module",
+  "author": "Yurii Rebryk",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bogxxx/bb-setup.git",
+    "directory": "plugins/bb-plugin-storage-cleaner"
+  },
+  "homepage": "https://github.com/bogxxx/bb-setup/tree/main/plugins/bb-plugin-storage-cleaner#readme",
+  "bugs": {
+    "url": "https://github.com/bogxxx/bb-setup/issues"
+  },
+  "engines": {
+    "bb": ">=0.50.0",
+    "bbPluginSdk": ">=0.6.157"
+  },
+  "bb": {
+    "name": "Storage Cleaner",
+    "description": "See what fills the disk of each of your machines, Mac, Linux, or Windows, and clean archived threads, worktrees, dev caches, and the Trash.",
+    "branding": {
+      "icon": "./assets/icon.svg"
+    },
+    "server": "./server.ts",
+    "host": "./host.ts",
+    "app": "./app.tsx",
+    "skills": []
+  },
+  "scripts": {
+    "build": "bb plugin build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@radix-ui/react-checkbox": "^1.3.7",
+    "@radix-ui/react-tabs": "^1.2.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.157",
+    "@radix-ui/react-alert-dialog": "^1.2.1",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "better-sqlite3": "^12.11.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "cron-parser": "^5.10.2",
+    "happy-dom": "^20.14.6",
+    "hono": "^4.13.13",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "sonner": "^1.7.4",
+    "tailwind-merge": "^3.7.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.11"
+  },
+  "contributors": [
+    "bogxxx (Linux, Windows and multi-machine port)"
+  ]
+}

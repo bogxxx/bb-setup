@@ -4,5 +4,8 @@
   },
   "push-notifications": {
     "childLevel": "muted"
+  },
+  "role-picker": {
+    "defaultRole": "orchestrator"
   }
 }
