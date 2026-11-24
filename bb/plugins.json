@@ -76,6 +76,11 @@
       "id": "superhuman",
       "source": "repo:plugins/bb-plugin-superhuman",
       "enabled": true
+    },
+    {
+      "id": "thread-board",
+      "source": "repo:plugins/bb-plugin-thread-board",
+      "enabled": true
     }
   ],
   "builtinsEnabled": {
