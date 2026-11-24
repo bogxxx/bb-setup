@@ -58,9 +58,8 @@
     },
     {
       "id": "resource-monitor",
-      "source": "git:https://github.com/rebryk/bb-plugins.git@semver:resource-monitor/:^0.1.0",
-      "enabled": true,
-      "subdirectory": "resource-monitor"
+      "source": "repo:plugins/bb-plugin-resource-monitor",
+      "enabled": true
     },
     {
       "id": "role-picker",
@@ -75,9 +74,8 @@
     },
     {
       "id": "superhuman",
-      "source": "git:https://github.com/rebryk/bb-plugins.git@semver:superhuman/:^0.1.0",
-      "enabled": true,
-      "subdirectory": "superhuman"
+      "source": "repo:plugins/bb-plugin-superhuman",
+      "enabled": true
     }
   ],
   "builtinsEnabled": {

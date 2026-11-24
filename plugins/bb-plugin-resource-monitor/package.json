@@ -1,0 +1,63 @@
+{
+  "name": "bb-plugin-resource-monitor",
+  "version": "0.2.0",
+  "type": "module",
+  "author": "Yurii Rebryk",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bogxxx/bb-setup.git",
+    "directory": "plugins/bb-plugin-resource-monitor"
+  },
+  "bugs": {
+    "url": "https://github.com/bogxxx/bb-setup/issues"
+  },
+  "homepage": "https://github.com/bogxxx/bb-setup/tree/main/plugins/bb-plugin-resource-monitor#readme",
+  "engines": {
+    "bb": ">=0.50.0",
+    "bbPluginSdk": ">=0.6.157"
+  },
+  "bb": {
+    "name": "Resource Monitor",
+    "description": "Live CPU, RAM, and GPU bars for every BB machine in the sidebar, a page with each machine's load and its processes to sort, filter, and quit, and a guard that keeps BB responsive when the Mac server is overloaded.",
+    "branding": {
+      "icon": "./assets/icon.svg"
+    },
+    "server": "./server.ts",
+    "host": "./host.ts",
+    "app": "./app.tsx",
+    "skills": []
+  },
+  "scripts": {
+    "build": "bb plugin build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.157",
+    "@radix-ui/react-alert-dialog": "^1.2.1",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.3",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "better-sqlite3": "^12.0.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "cron-parser": "^5.5.0",
+    "hono": "^4.11.9",
+    "jsdom": "^27.0.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "sonner": "^1.7.4",
+    "tailwind-merge": "^3.7.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.11"
+  },
+  "contributors": [
+    "bogxxx (multi-machine and Windows port)"
+  ]
+}
