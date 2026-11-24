@@ -4,7 +4,7 @@ import {
   createFakePluginHost,
   makeThreadResponse,
 } from "@get-bb/plugin-sdk/testing";
-import plugin, { isOld, UNTIL_NEEDED, type ThreadState } from "./server";
+import plugin, { isOld, isQuiet, UNTIL_NEEDED, type ThreadState } from "./server";
 
 const NOW = Date.now();
 const DAY = 86_400_000;
@@ -23,11 +23,21 @@ const cutoff = NOW - 3 * DAY;
 it("counts a finished, read, unpinned thread untouched since the cutoff as old", () => {
   expect(isOld(base, cutoff)).toBe(true);
   expect(isOld({ ...base, lastReadAt: null, latestAttentionAt: null }, cutoff)).toBe(true);
+  // A failure you read and left for days is old too.
+  expect(isOld({ ...base, status: "error" }, cutoff)).toBe(true);
+});
+
+it("lets a child keep its tree in view only while it runs, waits or changed lately", () => {
+  // Unread and failed children don't count: agents spawn them and nobody opens them.
+  expect(isQuiet({ ...base, lastReadAt: null }, cutoff)).toBe(true);
+  expect(isQuiet({ ...base, status: "error" }, cutoff)).toBe(true);
+  expect(isQuiet({ ...base, status: "active" }, cutoff)).toBe(false);
+  expect(isQuiet({ ...base, queuedMessageCount: 2 }, cutoff)).toBe(false);
+  expect(isQuiet({ ...base, updatedAt: NOW }, cutoff)).toBe(false);
 });
 
 it.each([
   ["running", { status: "active" }],
-  ["failed", { status: "error" }],
   ["starting", { status: "starting" }],
   ["pinned", { pinnedAt: NOW - 20 * DAY }],
   ["unread", { latestAttentionAt: NOW - 5 * DAY, lastReadAt: NOW - 6 * DAY }],
@@ -49,6 +59,8 @@ it("snoozes old top-level trees until they need you, and keeps a tree with a cur
     oldKid: row("oldKid", "old"),
     busy: row("busy", null),
     busyKid: row("busyKid", "busy", { status: "active" }),
+    // An unread, failed child of an old tree doesn't keep it.
+    oldKid2: row("oldKid2", "old", { status: "error", lastReadAt: null }),
     fresh: row("fresh", null, { updatedAt: NOW }),
   };
   const response = (id: string) => ({ ...makeThreadResponse({ id, title: `Thread ${id}`, parentThreadId: rows[id].parentThreadId }), ...rows[id] });

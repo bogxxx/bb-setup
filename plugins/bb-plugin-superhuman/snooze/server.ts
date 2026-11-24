@@ -123,22 +123,27 @@ export interface ThreadState {
   activeBackgroundAgentCount?: number;
 }
 
+const RUNNING = new Set(["active", "starting", "pending", "stopping"]);
+
+/** Whether a thread does nothing now and nothing touched it since `cutoff`. */
+export function isQuiet(thread: ThreadState, cutoff: number) {
+  return (
+    !RUNNING.has(thread.status) &&
+    thread.updatedAt < cutoff &&
+    !thread.queuedMessageCount &&
+    !thread.activeBackgroundAgentCount
+  );
+}
+
 /**
- * Whether a thread is done with for now: not running, failed or waiting, not
- * pinned, read, and untouched since `cutoff`.
+ * Whether a top-level thread is done with for now: quiet, not pinned, and
+ * read. A failed one counts once you read it: it sat unchanged for days.
  */
 export function isOld(thread: ThreadState, cutoff: number) {
   const unread =
     thread.latestAttentionAt !== null &&
     (thread.lastReadAt === null || thread.latestAttentionAt > thread.lastReadAt);
-  return (
-    thread.status === "idle" &&
-    thread.pinnedAt === null &&
-    !unread &&
-    thread.updatedAt < cutoff &&
-    !thread.queuedMessageCount &&
-    !thread.activeBackgroundAgentCount
-  );
+  return isQuiet(thread, cutoff) && thread.pinnedAt === null && !unread;
 }
 
 export default async function registerSnoozeServer(
@@ -363,13 +368,15 @@ export default async function registerSnoozeServer(
       checked++;
       const thread = await threads.get({ threadId }).catch(() => null);
       if (!thread || thread.archivedAt !== null || !isOld(thread, cutoff)) continue;
-      // A current descendant keeps its whole tree in view.
+      // A child thread that runs, waits in a queue or changed lately keeps
+      // its whole tree in view. Agents spawn most children and nobody opens
+      // them, so their read state and old failures don't count.
       let current = false;
       const tree = [threadId];
       for (const parentThreadId of tree) {
         const kids = await threads.list({ parentThreadId, includeHidden: true });
         for (const kid of kids) {
-          if (kid.archivedAt === null && !isOld(kid, cutoff)) current = true;
+          if (kid.archivedAt === null && !isQuiet(kid, cutoff)) current = true;
           tree.push(kid.id);
         }
         if (current) break;

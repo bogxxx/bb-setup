@@ -17,7 +17,9 @@ This copy, in bogxxx/bb-setup; versions up to 0.1.32 are Yurii Rebryk's, from
 - **Snooze Old Threads**: threads that are done, read, unpinned and untouched
   for this many days (3 by default; 0 turns it off) snooze until they run or
   need you again, every hour, so the sidebar keeps only current threads. A
-  tree with a current child stays. They show under Show snoozed threads as
+  tree stays while a child runs, waits in a queue or changed lately; a child's
+  read state and old failures don't count, since agents spawn most children
+  and nobody opens them. A top-level thread that failed snoozes once read. They show under Show snoozed threads as
   "until it needs you", and thread search still finds them.
 
 ## 0.1.32 (2026-11-04)
