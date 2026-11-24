@@ -29,12 +29,13 @@ const EDITABLE =
 const ITEM =
   '[role="option"], [role="menuitem"], [role="menuitemradio"], button';
 const ROW = "[data-sidebar-thread-shortcut-target]";
-// The new-thread project, model, machine and branch controls, in number order.
+// The new-thread project, model, machine, branch and role controls, in number order.
 const CONTROLS = [
   "[data-promptbox-project-control]",
   'button[aria-label^="Provider, model and reasoning"]',
   'button[aria-label="Environment"][data-promptbox-shrinkable-control], button[aria-label="Machine"]',
   'button[aria-label="Worktree"], button[aria-label="Branch"], button[aria-label="Environment"][data-promptbox-icon-only-control]',
+  "label:has(select[data-role-picker-select]:not(:disabled))",
 ];
 const CONTROL = CONTROLS.join(", ");
 const MODEL = CONTROLS[1];
@@ -361,7 +362,18 @@ export function handle(event: KeyboardEvent): boolean {
   }
   const target = items[(Number(key) + 9) % 10];
   if (target && !event.repeat) {
-    target.click();
+    const select = target instanceof HTMLLabelElement ? target.control : null;
+    if (select instanceof HTMLSelectElement) {
+      // showPicker opens the native menu; a missing or thrown call uses the label.
+      select.focus();
+      try {
+        select.showPicker();
+      } catch {
+        target.click();
+      }
+    } else {
+      target.click();
+    }
     // A provider is the whole model choice, so close its picker.
     if (setup?.open?.matches(MODEL)) setup.open.click();
   }

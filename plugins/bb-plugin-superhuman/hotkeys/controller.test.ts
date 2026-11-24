@@ -288,3 +288,130 @@ it("lets H through when Snooze is off", () => {
   update({ threadActions: { snooze: () => false, archive: () => true } });
   expect(handle(press("h", "KeyH"))).toBe(false);
 });
+
+/** Role's number follows whichever setup controls are actually on show. */
+const setupPills = () =>
+  [...document.querySelectorAll("[data-promptbox-shell] [data-superhuman-key]")].map((element) => [
+    element.querySelector("span")?.textContent ?? element.textContent,
+    element.getAttribute("data-superhuman-key"),
+  ]);
+
+function addRole() {
+  const shell = document.querySelector("[data-promptbox-shell]")!;
+  shell.insertAdjacentHTML(
+    "beforeend",
+    `<label><span>Role</span><select data-role-picker-select><option value="regular">Regular</option><option value="orchestrator">Orchestrator</option><option value="prompt">Prompt generator</option></select></label>`,
+  );
+  const select = shell.querySelector<HTMLSelectElement>("select[data-role-picker-select]")!;
+  select.value = "regular";
+  update({ settings: {} });
+  return select;
+}
+
+const prompt = () => document.querySelector<HTMLElement>('[contenteditable="true"]')!;
+
+it("numbers Role after Branch, and after Machine when Branch is hidden or gone", () => {
+  addRole();
+  expect(setupPills()).toEqual([
+    ["Project", "1"],
+    ["Model", "2"],
+    ["Machine", "3"],
+    ["Branch", "4"],
+    ["Role", "5"],
+  ]);
+  const branch = document.querySelector<HTMLElement>('button[aria-label="Branch"]')!;
+  branch.checkVisibility = () => false;
+  update({ settings: {} });
+  expect(setupPills()).toEqual([
+    ["Project", "1"],
+    ["Model", "2"],
+    ["Machine", "3"],
+    ["Role", "4"],
+  ]);
+  expect(branch.hasAttribute("data-superhuman-key")).toBe(false);
+  branch.remove();
+  update({ settings: {} });
+  expect(setupPills()).toEqual([
+    ["Project", "1"],
+    ["Model", "2"],
+    ["Machine", "3"],
+    ["Role", "4"],
+  ]);
+});
+
+it("opens the Role menu on its bare digit and leaves the role unchanged", () => {
+  const select = addRole();
+  const label = select.closest("label")!;
+  const activate = (key: string, code: string) => {
+    prompt().focus();
+    return handle(press(key, code));
+  };
+
+  const showPicker = vi.fn();
+  select.showPicker = showPicker;
+  const focus = vi.spyOn(select, "focus");
+  const click = vi.spyOn(label, "click");
+  expect(activate("5", "Digit5")).toBe(true);
+  expect(showPicker).toHaveBeenCalledOnce();
+  expect(focus).toHaveBeenCalled();
+  expect(click).not.toHaveBeenCalled();
+  expect(select.value).toBe("regular");
+  focus.mockRestore();
+  click.mockRestore();
+
+  document.querySelector('button[aria-label="Branch"]')!.remove();
+  showPicker.mockClear();
+  const focusAgain = vi.spyOn(select, "focus");
+  const clickAgain = vi.spyOn(label, "click");
+  expect(activate("4", "Digit4")).toBe(true);
+  expect(showPicker).toHaveBeenCalledOnce();
+  expect(focusAgain).toHaveBeenCalled();
+  expect(clickAgain).not.toHaveBeenCalled();
+  expect(select.value).toBe("regular");
+  focusAgain.mockRestore();
+  clickAgain.mockRestore();
+
+  Reflect.deleteProperty(select, "showPicker");
+  const focusMissing = vi.spyOn(select, "focus");
+  const clickMissing = vi.spyOn(label, "click");
+  expect(activate("4", "Digit4")).toBe(true);
+  expect(focusMissing).toHaveBeenCalled();
+  expect(clickMissing).toHaveBeenCalledOnce();
+  expect(select.value).toBe("regular");
+  focusMissing.mockRestore();
+  clickMissing.mockRestore();
+
+  select.showPicker = () => {
+    throw new Error("NotAllowedError");
+  };
+  const clickThrown = vi.spyOn(label, "click");
+  expect(activate("4", "Digit4")).toBe(true);
+  expect(clickThrown).toHaveBeenCalledOnce();
+  expect(select.value).toBe("regular");
+});
+
+it("leaves Role digits and Option-R to chords that already have owners", () => {
+  const select = addRole();
+  const label = select.closest("label")!;
+  const showPicker = vi.fn();
+  select.showPicker = showPicker;
+  const click = vi.spyOn(label, "click");
+  for (const init of [
+    { key: "5", code: "Digit5", metaKey: true },
+    { key: "5", code: "Digit5", ctrlKey: true },
+    { key: "r", code: "KeyR", altKey: true },
+    { key: "R", code: "KeyR", altKey: true, shiftKey: true },
+  ]) expect(handle(press(init.key, init.code, init))).toBe(false);
+  expect(showPicker).not.toHaveBeenCalled();
+  expect(click).not.toHaveBeenCalled();
+  expect(select.value).toBe("regular");
+});
+
+it("clears the Role pill with the others when thread shortcuts are off", () => {
+  const select = addRole();
+  expect(setupPills()).toContainEqual(["Role", "5"]);
+  update({ settings: { threadShortcuts: false } });
+  expect(pills()).toEqual([]);
+  expect(handle(press("5", "Digit5"))).toBe(false);
+  expect(select.value).toBe("regular");
+});
