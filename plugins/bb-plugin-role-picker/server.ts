@@ -107,7 +107,7 @@ const REVIEWERS: Record<string, SpawnSpec> = {
 // No entry runs on the worker's provider. No exact provider and model pair appears twice, so two
 // steps may share a provider when they use separately limited models (Antigravity's Argon and
 // Gemini fallback). Copilot and Cursor review inside themselves on another vendor's model
-// (Copilot's GPT worker gets Opus; Cursor gets cantrip-review on Meta's Muse).
+// (Copilot's GPT worker gets Opus; Cursor gets cantrip-review on Gemini Neon).
 // A Claude worker is never reviewed by a Claude model (Opus or Haiku). Everyone else gets
 // Opus 5.5 second, unless it is already first.
 const REVIEW_ORDER: Record<string, string[]> = {

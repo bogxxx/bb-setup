@@ -83,7 +83,7 @@ The reviewer sends defects to the worker itself, so you see only the final repor
 
 Messaging exception: the bb guide forbids messaging other threads unless the user asks. The user authorized this loop only. The reviewer may message the worker it reviews, and the worker may reply to that reviewer. You send no other thread messages.
 
-Inside Cursor, the review is `cantrip-review`, and the loop works the same way through the Cursor orchestrator. Leave its model pin as `muse-wonder[effort=medium,fast=false]`. Do not spawn a BB Cursor thread with `--model muse-wonder`; the Cursor provider catalog on this machine does not list that id.
+Inside Cursor, the review is `cantrip-review`, and the loop works the same way through the Cursor orchestrator. Leave its model pin as `gemini-4-neon[effort=medium,fast=false]`. Do not spawn a BB Cursor thread with `--model gemini-4-neon`; the Cursor provider catalog on this machine does not list that id.
 
 If every review provider is out of quota or unavailable, say the review did not run. Do not fill the gap with a Claude model.
 

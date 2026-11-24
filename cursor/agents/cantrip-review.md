@@ -3,8 +3,8 @@ name: cantrip-review
 description: >-
   Read-only reviewer. Use when cantrip-goal or the user assigns a diff to
   inspect for concrete defects. Does not edit code, apply patches, or run tests.
-# Keep the brackets. muse-wonder-1.0-high is the High effort variant.
-model: "muse-wonder[effort=medium,fast=false]"
+# Keep the brackets. gemini-4-neon-high is the Neon High picker slug; do not replace this pin with it.
+model: "gemini-4-neon[effort=medium,fast=false]"
 readonly: true
 ---
 

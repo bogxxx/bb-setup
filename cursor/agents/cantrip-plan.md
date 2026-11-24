@@ -5,7 +5,7 @@ description: >-
   implementation plan grounded in this repository. Turns the findings in its
   assignment into an ordered plan. Does not diagnose, edit files, or implement
   the change.
-model: "claude-opus-5-5[effort=medium,fast=false]"
+model: "gemini-4-neon[effort=medium,fast=false]"
 readonly: true
 ---
 

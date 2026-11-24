@@ -25,7 +25,7 @@ The reviewer is always a different model family from the worker that wrote the c
 
 | Provider | Worker | Reviewer |
 | --- | --- | --- |
-| Cursor | Grok 4.7 | Meta Muse (`cantrip-review`) |
+| Cursor | Grok 4.7 | Gemini Neon (`cantrip-review`) |
 | GitHub Copilot | GPT 6.1 Terra | Claude Opus 5.5 (`reviewer`) |
 | Claude Code | Claude Haiku 5.5 | Gemini 4 Argon (Antigravity) |
 
@@ -59,11 +59,11 @@ Prompt generator: `~/.cursor/agents/cantrip-interview.md`, model `grok-4.7[reaso
 
 Leave these model lines as written:
 
-- cantrip-goal and cantrip-plan: `claude-opus-5-5[effort=medium,fast=false]`
+- cantrip-goal: `claude-opus-5-5[effort=medium,fast=false]`
+- cantrip-plan and cantrip-review: `gemini-4-neon[effort=medium,fast=false]`
 - cantrip-explore and cantrip-implement: `grok-4.7[reasoning_effort=xhigh,fast=false]`
-- cantrip-review: `muse-wonder[effort=medium,fast=false]`
 
-Do not replace a bracket pin with a picker slug. The BB Cursor catalog does not list `muse-wonder`, `grok-4.7`, or `claude-opus-5-5`. Those pins are for Cursor's own subagents. Do not pass them to `bb thread spawn --provider acp-cursor`.
+Do not replace a bracket pin with a picker slug. The BB Cursor catalog does not list `muse-wonder`, `gemini-4-neon`, `grok-4.7`, or `claude-opus-5-5`. Those pins are for Cursor's own subagents. Do not pass them to `bb thread spawn --provider acp-cursor`.
 
 Inside Cursor, review with `cantrip-review`.
 
