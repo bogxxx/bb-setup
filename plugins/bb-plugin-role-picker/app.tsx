@@ -87,7 +87,7 @@ function RoleSelect({ threadId }: { threadId: string | null }) {
     <label
       className="flex h-6 items-center gap-1.5 text-xs text-muted-foreground"
       title="Role (Alt+R, Shift+Alt+R back)"
-      aria-keyshortcuts="Alt+R Alt+Shift+R"
+      aria-keyshortcuts="Alt+R"
     >
       <span>Role</span>
       <select
