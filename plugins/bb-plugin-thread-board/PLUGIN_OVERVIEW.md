@@ -18,6 +18,6 @@ A child titled `review` that needs you is marked **review**. A running card that
 
 ## Hover, settings, sidebar
 
-Hovering a card shows its title, chip, and up to five recent steps, split between the agent and you. `showBoard` turns the section off. `doneDays` sets the window for finished threads and for a stale snoozed unread.
+Hovering a thread link shows its title, chip, and the latest assistant message. When the thread is waiting, the card also says what it needs from you, and an approval that can be allowed once has an Approve button. `showBoard` turns the section off. `doneDays` sets the window for finished threads and for a stale snoozed unread.
 
 The same time, project badge, and chip can sit on a thread row's metadata line under the title, and only after Organize → Rows → Metadata is on.

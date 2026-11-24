@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ago, board, latestSteps, type BoardThread } from "./board";
+import { ago, board, threadPreview, type BoardThread } from "./board";
 
 const NOW = 1_800_000_000_000;
 const MIN = 60_000;
@@ -156,26 +156,200 @@ describe("board", () => {
   });
 });
 
-it("keeps the last work rows of a turn, with approval as you", () => {
-  const rows = [
-    {
-      kind: "turn",
-      children: [
-        { kind: "work", status: "completed", workKind: "tool", presentation: { title: "Read the file" } },
-        { kind: "work", status: "completed", workKind: "tool", toolName: "bash" },
-        { kind: "work", status: "pending", workKind: "approval" },
+describe("threadPreview", () => {
+  it("uses the latest assistant line and ignores work rows", () => {
+    const rows = [
+      {
+        kind: "turn",
+        status: "completed",
+        children: [
+          { kind: "conversation", role: "assistant", text: "# First draft" },
+          { kind: "work", status: "completed", workKind: "tool", toolName: "bash", command: "cd /tmp && cat file" },
+          { kind: "work", status: "completed", workKind: "command", toolName: "cat" },
+          { kind: "conversation", role: "user", text: "go on" },
+          { kind: "conversation", role: "assistant", text: "- Shipped\n\nthe change" },
+        ],
+      },
+      {
+        kind: "turn",
+        status: "pending",
+        children: [{ kind: "work", status: "pending", workKind: "tool", toolName: "bash" }],
+      },
+    ];
+    expect(threadPreview(rows).agent).toEqual({ text: "Shipped the change", completed: true });
+    expect(threadPreview([{ kind: "turn", status: "completed", children: [{ kind: "work", status: "completed", workKind: "tool", toolName: "bash" }] }]).agent).toBeNull();
+  });
+
+  it("marks the line completed when its turn completed or no pending turn follows", () => {
+    expect(
+      threadPreview([
+        { kind: "conversation", role: "assistant", text: "Earlier" },
+        { kind: "turn", status: "pending", children: [] },
+      ]).agent,
+    ).toEqual({ text: "Earlier", completed: false });
+    expect(
+      threadPreview([
+        { kind: "turn", status: "pending", children: [{ kind: "conversation", role: "assistant", text: "Working" }] },
+      ]).agent,
+    ).toEqual({ text: "Working", completed: true });
+  });
+
+  it("leaves you empty when the thread is not waiting, even with old prompts", () => {
+    const rows = [
+      {
+        kind: "turn",
+        status: "completed",
+        children: [
+          { kind: "work", status: "completed", workKind: "approval", approvalKind: "file-edit" },
+          { kind: "work", status: "completed", workKind: "question", questions: [{ prompt: "Old question" }] },
+          { kind: "conversation", role: "assistant", text: "Done" },
+        ],
+      },
+    ];
+    expect(threadPreview(rows).you).toBeNull();
+    expect(threadPreview(rows, { waiting: false }).you).toBeNull();
+    expect(
+      threadPreview(rows, {
+        interactions: [{ id: "old", status: "resolved", payload: { kind: "approval", reason: "Old", availableDecisions: ["allow_once"], subject: { kind: "plan" } } }],
+      }).you,
+    ).toBeNull();
+  });
+
+  it("sets approve only for a pending approval that allows allow_once", () => {
+    const permissions = { fileSystem: { read: ["/src"], write: ["/src"] }, network: { enabled: false } };
+    const command = threadPreview([], {
+      interactions: [
+        { id: "old", status: "resolved", payload: { kind: "approval", reason: "Skip", availableDecisions: ["allow_once"], subject: { kind: "plan" } } },
+        {
+          id: "int_cmd",
+          status: "pending",
+          payload: {
+            kind: "approval",
+            reason: null,
+            availableDecisions: ["allow_once", "deny"],
+            subject: { kind: "command", command: "cd /tmp && cat file" },
+          },
+        },
       ],
-    },
-  ];
-  expect(latestSteps(rows)).toEqual([
-    { label: "Read the file", status: "completed", actor: "agent" },
-    { label: "bash", status: "completed", actor: "agent" },
-    { label: "approval", status: "pending", actor: "you" },
-  ]);
-  expect(latestSteps(rows, 2)).toEqual([
-    { label: "bash", status: "completed", actor: "agent" },
-    { label: "approval", status: "pending", actor: "you" },
-  ]);
+    });
+    expect(command.you).toEqual({ text: "Approve command", approve: { interactionId: "int_cmd", grantedPermissions: null } });
+
+    const grant = threadPreview([], {
+      waiting: true,
+      interactions: [
+        {
+          id: "int_perm",
+          status: "pending",
+          payload: {
+            kind: "approval",
+            reason: "Needs access",
+            availableDecisions: ["allow_once"],
+            subject: { kind: "permission_grant", permissions, toolName: "bash" },
+          },
+        },
+      ],
+    });
+    expect(grant.you).toEqual({ text: "Needs access", approve: { interactionId: "int_perm", grantedPermissions: permissions } });
+
+    expect(
+      threadPreview([], {
+        waiting: true,
+        interactions: [
+          {
+            id: "int_plan",
+            status: "pending",
+            payload: { kind: "approval", reason: null, availableDecisions: ["allow_once"], subject: { kind: "plan", plan: "do it" } },
+          },
+        ],
+      }).you,
+    ).toEqual({ text: "Approve plan", approve: { interactionId: "int_plan", grantedPermissions: null } });
+
+    expect(
+      threadPreview([], {
+        waiting: true,
+        interactions: [
+          {
+            id: "int_file",
+            status: "pending",
+            payload: { kind: "approval", reason: "  ", availableDecisions: ["allow_once"], subject: { kind: "file_change" } },
+          },
+        ],
+      }).you?.text,
+    ).toBe("Approve file edit");
+
+    expect(
+      threadPreview([], {
+        waiting: true,
+        interactions: [
+          {
+            id: "int_tool",
+            status: "pending",
+            payload: {
+              kind: "approval",
+              reason: null,
+              availableDecisions: ["allow_once"],
+              subject: { kind: "tool_use", tool: "bash", presentation: { title: "Run the check", label: { pending: "Check" } } },
+            },
+          },
+        ],
+      }).you?.text,
+    ).toBe("Run the check");
+  });
+
+  it("does not approve a question, a plugin form, or an approval without allow_once", () => {
+    expect(
+      threadPreview([], {
+        waiting: true,
+        interactions: [{ id: "q", status: "pending", payload: { kind: "user_question", questions: [{ shortLabel: "Pick one", prompt: "Which option?" }] } }],
+      }).you,
+    ).toEqual({ text: "Pick one", approve: null });
+
+    expect(
+      threadPreview([], {
+        interactions: [
+          {
+            id: "form",
+            status: "pending",
+            payload: { kind: "plugin", title: "Fill the form", presentation: { title: "Review the form", label: { pending: "Pending form" } } },
+          },
+        ],
+      }).you,
+    ).toEqual({ text: "Review the form", approve: null });
+
+    expect(
+      threadPreview([], {
+        waiting: true,
+        interactions: [
+          {
+            id: "no",
+            status: "pending",
+            payload: { kind: "approval", reason: null, availableDecisions: ["deny", "allow_for_session"], subject: { kind: "plan" } },
+          },
+        ],
+      }).you,
+    ).toEqual({ text: "Approve plan", approve: null });
+
+    const fallback = threadPreview(
+      [
+        {
+          kind: "turn",
+          status: "pending",
+          children: [
+            { kind: "work", status: "completed", workKind: "question", questions: [{ prompt: "Old" }] },
+            { kind: "work", status: "pending", workKind: "tool", toolName: "bash", command: "cd /tmp && cat file" },
+            { kind: "work", status: "pending", workKind: "question", questions: [{ prompt: "Which file?" }] },
+          ],
+        },
+      ],
+      { waiting: true },
+    );
+    expect(fallback.you).toEqual({ text: "Which file?", approve: null });
+    expect(fallback.agent).toBeNull();
+    expect(threadPreview([{ kind: "work", status: "pending", workKind: "tool", toolName: "cat" }], { waiting: true }).you).toEqual({
+      text: "Waiting for your input",
+      approve: null,
+    });
+  });
 });
 
 it("says how long ago, as the sidebar does", () => {

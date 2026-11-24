@@ -15,7 +15,7 @@ import {
   type PluginSidebarThread,
 } from "@get-bb/plugin-sdk/app";
 import { ago, board, COLUMNS, type BoardThread, type Card, type Column, type ProjectGroup, type Tag } from "./board";
-import { CardHover, Chip } from "./steps";
+import { Chip, ThreadPreviewOverlay } from "./steps";
 import { cn } from "@/lib/utils";
 
 type IconProvider = ComponentProps<typeof ProviderIcon>["provider"];
@@ -79,29 +79,27 @@ const CardView = memo(function CardView({
   return (
     <ThreadActionsContextMenu thread={target}>
       <div className="min-w-0">
-        <CardHover threadId={t.id} title={t.displayTitle} tag={tag}>
-          <a
-            href={t.href}
-            className="block rounded-lg border border-border bg-background px-3 py-2 shadow-xs transition-colors hover:bg-state-hover"
-          >
-            <div className="flex items-start gap-2">
-              <span className={cn("mt-1.5 size-1.5 shrink-0 rounded-full", DOT[column])} />
-              <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{t.displayTitle}</span>
-              <Chip tag={tag} />
-            </div>
-            <div className="mt-1 flex items-center gap-2 pl-3.5 text-xs text-muted-foreground">
-              <span>{ago(t.updatedAt, now)}</span>
-              {card.busyChildren > 0 && (
-                <span>
-                  · {card.busyChildren} {card.busyChildren === 1 ? "child" : "children"} running
-                </span>
-              )}
-              <span className="ml-auto flex size-3.5 items-center justify-center">
-                {provider && <ProviderIcon providerKind="agent" provider={provider} className="size-3.5" />}
+        <a
+          href={t.href}
+          className="block rounded-lg border border-border bg-background px-3 py-2 shadow-xs transition-colors hover:bg-state-hover"
+        >
+          <div className="flex items-start gap-2">
+            <span className={cn("mt-1.5 size-1.5 shrink-0 rounded-full", DOT[column])} />
+            <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{t.displayTitle}</span>
+            <Chip tag={tag} />
+          </div>
+          <div className="mt-1 flex items-center gap-2 pl-3.5 text-xs text-muted-foreground">
+            <span>{ago(t.updatedAt, now)}</span>
+            {card.busyChildren > 0 && (
+              <span>
+                · {card.busyChildren} {card.busyChildren === 1 ? "child" : "children"} running
               </span>
-            </div>
-          </a>
-        </CardHover>
+            )}
+            <span className="ml-auto flex size-3.5 items-center justify-center">
+              {provider && <ProviderIcon providerKind="agent" provider={provider} className="size-3.5" />}
+            </span>
+          </div>
+        </a>
       </div>
     </ThreadActionsContextMenu>
   );
@@ -256,4 +254,5 @@ export default definePluginApp((app) => {
     useData: useBoardMeta,
     component: BoardMetaLine,
   });
+  app.slots.experimental_appOverlay({ id: "thread-preview", component: ThreadPreviewOverlay });
 });

@@ -31,9 +31,9 @@ Running chips are `queued`, `plan`, `workflow`, and `agents`. **review** is warm
 
 Done chips are muted: `snoozed` when the thread is hidden, otherwise `pinned` when it is pinned. A plain done card has no chip.
 
-## Hover steps
+## Hover preview
 
-On a pointer that can hover, resting on a card for about 400ms opens a popover with the title, the chip, and up to five recent timeline steps. Agent steps and steps that need you (approval, question, form) are grouped apart. Each step has a status dot. The popover loads with `threads.timeline` (`segmentLimit` `"2"`, `deferContent` `"true"`, `includeNestedRows` `"true"`, because a turn's work rows are omitted without the nested rows). It shows "Loading…" and, if the read fails, "Couldn't load steps". The card link still clicks through. Coarse pointers skip the popover.
+On a pointer that can hover, resting on a thread link (a board card or a sidebar row) for about 400ms opens a preview: the title, the chip, the latest assistant message, and, when the thread is waiting, what it needs from you. An approval that can be allowed once has an Approve button. The preview loads with `threads.timeline` (`segmentLimit` `"2"`, `deferContent` `"true"`, `includeNestedRows` `"true"`) and, when the thread has a pending interaction, `threads.interactions.list`. It shows "Loading…", "Couldn't load preview", or "No summary yet". Leaving, Escape, or scrolling closes it. Coarse pointers skip it. Hovering a chat message does not open it.
 
 ## Sidebar metadata
 

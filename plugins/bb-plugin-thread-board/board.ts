@@ -197,43 +197,217 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function stepLabel(row: Record<string, unknown>): string {
-  const presentation = isRecord(row.presentation) ? row.presentation : null;
-  const title = presentation?.title;
-  if (typeof title === "string" && title.length > 0) return title;
-  const label = presentation && isRecord(presentation.label) ? presentation.label : null;
-  if (label) {
-    const key = row.status === "pending" ? "pending" : "completed";
-    const text = label[key];
-    if (typeof text === "string" && text.length > 0) return text;
-  }
-  if (typeof row.toolName === "string" && row.toolName.length > 0) return row.toolName;
-  if (typeof row.workKind === "string" && row.workKind.length > 0) return row.workKind;
-  return "step";
+/** What the hover card says the agent last wrote. */
+export interface PreviewAgent {
+  text: string;
+  completed: boolean;
 }
 
-function collectSteps(rows: unknown[], out: { label: string; status: string; actor: "agent" | "you" }[]) {
-  for (const row of rows) {
-    if (!isRecord(row)) continue;
-    if (row.kind === "work") {
-      const workKind = typeof row.workKind === "string" ? row.workKind : "";
-      out.push({
-        label: stepLabel(row),
-        status: typeof row.status === "string" ? row.status : "",
-        actor: YOU_WORK.has(workKind) ? "you" : "agent",
-      });
+/** Permissions copied onto an allow-once approval. Null for every other subject. */
+export interface GrantedPermissions {
+  fileSystem: { read: string[]; write: string[] } | null;
+  network: { enabled: boolean | null } | null;
+}
+
+/** An approval the card can resolve with allow_once. */
+export interface ApproveTarget {
+  interactionId: string;
+  grantedPermissions: GrantedPermissions | null;
+}
+
+/** What the thread is waiting on the user for, when it is waiting. */
+export interface PreviewYou {
+  text: string;
+  approve: ApproveTarget | null;
+}
+
+export interface ThreadPreview {
+  agent: PreviewAgent | null;
+  you: PreviewYou | null;
+}
+
+/** Collapse whitespace and drop a leading heading or list marker, repeatedly. */
+function conciseLine(text: string): string {
+  let line = text.replace(/\s+/g, " ").trim();
+  for (let i = 0; i < 3 && line.length > 0; i++) {
+    const next = line.replace(/^(?:#{1,6} |[-*+] |\d+[.)] )/, "").trim();
+    if (next === line) break;
+    line = next;
+  }
+  return line;
+}
+
+function str(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+type WalkMark = { kind: "turn"; status: string } | { kind: "hit" };
+
+function latestAgent(rows: readonly unknown[]): PreviewAgent | null {
+  const marks: WalkMark[] = [];
+  const hits: { text: string; enclosing: string | null; at: number }[] = [];
+  const visit = (list: readonly unknown[], enclosing: string | null) => {
+    for (const row of list) {
+      if (!isRecord(row)) continue;
+      if (row.kind === "turn") {
+        const status = typeof row.status === "string" ? row.status : "";
+        marks.push({ kind: "turn", status });
+        if (Array.isArray(row.children)) visit(row.children, status);
+        continue;
+      }
+      if (row.kind !== "conversation" || row.role !== "assistant" || typeof row.text !== "string") continue;
+      const text = conciseLine(row.text);
+      if (!text) continue;
+      marks.push({ kind: "hit" });
+      hits.push({ text, enclosing, at: marks.length - 1 });
     }
-    if (row.kind === "turn" && Array.isArray(row.children)) collectSteps(row.children, out);
+  };
+  visit(rows, null);
+  const found = hits[hits.length - 1];
+  if (!found) return null;
+  const pendingFollows = marks.slice(found.at + 1).some((mark) => mark.kind === "turn" && mark.status === "pending");
+  return { text: found.text, completed: found.enclosing === "completed" || !pendingFollows };
+}
+
+function presentationText(value: unknown): string {
+  if (!isRecord(value)) return "";
+  const title = str(value.title);
+  if (title) return conciseLine(title);
+  const label = isRecord(value.label) ? str(value.label.pending) : "";
+  return label ? conciseLine(label) : "";
+}
+
+function questionText(questions: unknown): string {
+  if (!Array.isArray(questions) || !isRecord(questions[0])) return "";
+  const text = str(questions[0].shortLabel) || str(questions[0].prompt);
+  return text ? conciseLine(text) : "";
+}
+
+function approvalSubjectLabel(subject: Record<string, unknown>): string {
+  switch (subject.kind) {
+    case "plan":
+      return "Approve plan";
+    case "file_change":
+      return "Approve file edit";
+    case "tool_use":
+      return presentationText(subject.presentation) || "Approve";
+    case "permission_grant":
+      return "Approve permissions";
+    case "command":
+      return "Approve command";
+    default:
+      return "Approve";
   }
 }
 
-/** The last `n` work rows under turns, in walk order. */
-export function latestSteps(
-  rows: unknown[],
-  n = 5,
-): { label: string; status: string; actor: "agent" | "you" }[] {
-  const out: { label: string; status: string; actor: "agent" | "you" }[] = [];
-  collectSteps(rows, out);
-  const cap = Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
-  return out.slice(Math.max(0, out.length - cap));
+function stringList(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const list: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") return null;
+    list.push(item);
+  }
+  return list;
+}
+
+function readPermissions(value: unknown): GrantedPermissions | null {
+  if (!isRecord(value)) return null;
+  let fileSystem: GrantedPermissions["fileSystem"] = null;
+  if (value.fileSystem != null) {
+    if (!isRecord(value.fileSystem)) return null;
+    const read = stringList(value.fileSystem.read);
+    const write = stringList(value.fileSystem.write);
+    if (!read || !write) return null;
+    fileSystem = { read, write };
+  }
+  let network: GrantedPermissions["network"] = null;
+  if (value.network != null) {
+    if (!isRecord(value.network)) return null;
+    const enabled = value.network.enabled;
+    if (enabled != null && typeof enabled !== "boolean") return null;
+    network = { enabled: typeof enabled === "boolean" ? enabled : null };
+  }
+  return { fileSystem, network };
+}
+
+function approveTarget(item: Record<string, unknown>, payload: Record<string, unknown>, subject: Record<string, unknown>): ApproveTarget | null {
+  const decisions = payload.availableDecisions;
+  const interactionId = str(item.id);
+  if (!interactionId || !Array.isArray(decisions) || !decisions.includes("allow_once")) return null;
+  return {
+    interactionId,
+    grantedPermissions: subject.kind === "permission_grant" ? readPermissions(subject.permissions) : null,
+  };
+}
+
+function youFromInteraction(item: Record<string, unknown>): PreviewYou {
+  const payload = isRecord(item.payload) ? item.payload : {};
+  if (payload.kind === "approval") {
+    const subject = isRecord(payload.subject) ? payload.subject : {};
+    const reason = str(payload.reason);
+    return {
+      text: (reason ? conciseLine(reason) : "") || approvalSubjectLabel(subject),
+      approve: approveTarget(item, payload, subject),
+    };
+  }
+  if (payload.kind === "user_question") {
+    return { text: questionText(payload.questions) || "Waiting for your input", approve: null };
+  }
+  const text = presentationText(payload.presentation) || (str(payload.title) ? conciseLine(str(payload.title)) : "");
+  return { text: text || "Waiting for your input", approve: null };
+}
+
+function workYouText(row: Record<string, unknown>): string {
+  if (row.workKind === "question") return questionText(row.questions);
+  if (row.workKind === "form") return presentationText(row.presentation) || (str(row.title) ? conciseLine(str(row.title)) : "");
+  if (row.workKind === "approval") {
+    if (row.approvalKind === "file-edit") return "Approve file edit";
+    if (row.approvalKind === "permission-grant") return "Approve permissions";
+    return "Approve";
+  }
+  return "";
+}
+
+function latestYouWork(rows: readonly unknown[]): string | null {
+  let text: string | null = null;
+  const visit = (list: readonly unknown[]) => {
+    for (const row of list) {
+      if (!isRecord(row)) continue;
+      if (row.kind === "turn" && Array.isArray(row.children)) visit(row.children);
+      if (row.kind === "work" && row.status === "pending" && YOU_WORK.has(String(row.workKind))) {
+        const next = workYouText(row);
+        if (next) text = next;
+      }
+    }
+  };
+  visit(rows);
+  return text;
+}
+
+function pendingInteractions(interactions: readonly unknown[] | undefined): Record<string, unknown>[] {
+  const pending: Record<string, unknown>[] = [];
+  for (const item of interactions ?? []) {
+    if (isRecord(item) && item.status === "pending") pending.push(item);
+  }
+  return pending;
+}
+
+/**
+ * The latest assistant message, and what a waiting thread needs from you.
+ * Work rows and tool names are never the agent line.
+ */
+export function threadPreview(
+  rows: readonly unknown[],
+  options?: { waiting?: boolean; interactions?: readonly unknown[] },
+): ThreadPreview {
+  const pending = pendingInteractions(options?.interactions);
+  const waiting = options?.waiting === true || pending.length > 0;
+  let you: PreviewYou | null = null;
+  if (waiting) {
+    const first = pending[0];
+    you = first
+      ? youFromInteraction(first)
+      : { text: latestYouWork(rows) ?? "Waiting for your input", approve: null };
+  }
+  return { agent: latestAgent(rows), you };
 }
