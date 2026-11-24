@@ -83,12 +83,16 @@ function RoleSelect({ threadId }: { threadId: string | null }) {
   }, [choose]);
 
   return (
-    <label className="flex h-6 items-center gap-1.5 text-xs text-muted-foreground" title="Role (Alt+R, Shift+Alt+R back)">
+    // The label declares the shortcut: a <select> can't draw Superhuman's hint pill.
+    <label
+      className="flex h-6 items-center gap-1.5 text-xs text-muted-foreground"
+      title="Role (Alt+R, Shift+Alt+R back)"
+      aria-keyshortcuts="Alt+R Alt+Shift+R"
+    >
       <span>Role</span>
       <select
         ref={select}
         aria-label="Role"
-        aria-keyshortcuts="Alt+R Alt+Shift+R"
         data-role-picker-select=""
         className="h-6 max-w-36 rounded-md border border-border bg-background px-1.5 text-xs text-foreground"
         value={role}
