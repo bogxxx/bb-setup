@@ -158,7 +158,7 @@ function chainProviders(record: ReviewRecord): string {
   return record.chain.map((_, i) => reviewerLabel(reviewerAt(record, i))).join(", ");
 }
 
-function spawnSpec(parentProviderId: string, name: Exclude<SpawnName, "review">): SpawnSpec {
+export function spawnSpec(parentProviderId: string, name: Exclude<SpawnName, "review">): SpawnSpec {
   if (parentProviderId === "acp-cursor") {
     const agent = {
       explore: "cantrip-explore.md",
@@ -169,11 +169,11 @@ function spawnSpec(parentProviderId: string, name: Exclude<SpawnName, "review">)
   }
   if (parentProviderId === "claude-code") {
     const claude = {
-      explore: { model: "claude-haiku-5-5", agent: { dir: ".claude" as const, name: "explorer.md" } },
-      contribute: { model: "claude-haiku-5-5", agent: { dir: ".claude" as const, name: "worker.md" } },
-      plan: { model: "claude-opus-5-5", agent: { dir: ".claude" as const, name: "planner.md" } },
+      explore: { model: "claude-haiku-5-5", reasoningLevel: "high", agent: { dir: ".claude" as const, name: "explorer.md" } },
+      contribute: { model: "claude-haiku-5-5", reasoningLevel: "high", agent: { dir: ".claude" as const, name: "worker.md" } },
+      plan: { model: "claude-opus-5-5", reasoningLevel: "medium", agent: { dir: ".claude" as const, name: "planner.md" } },
     }[name];
-    return { providerId: "claude-code", reasoningLevel: "medium", ...claude };
+    return { providerId: "claude-code", ...claude };
   }
   if (COPILOT_PROVIDERS.has(parentProviderId)) {
     const copilot = {

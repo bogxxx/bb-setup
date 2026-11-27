@@ -3,7 +3,7 @@ name: worker
 description: Implementer. Use for a bounded change, including code, tests when asked, docs, config, ADRs, git, and GitHub operations. Runs the verification commands in the assignment. Does not decide that the overall task is complete and does not review the diff.
 tools: Read, Grep, Glob, Edit, Write, Bash, PowerShell, Skill
 model: claude-haiku-5-5
-effort: medium
+effort: high
 omitClaudeMd: true
 ---
 

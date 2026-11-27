@@ -3,7 +3,7 @@ name: explorer
 description: Read-only investigator. Use for one focused question about repository behavior, architecture, dependencies, or execution paths. Never modifies code.
 tools: Read, Grep, Glob, Bash, PowerShell
 model: claude-haiku-5-5
-effort: medium
+effort: high
 omitClaudeMd: true
 ---
 
