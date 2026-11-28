@@ -7,7 +7,7 @@ describe("claude-code spawn reasoning levels", () => {
     expect(spawnSpec("claude-code", "contribute")).toMatchObject({ providerId: "claude-code", reasoningLevel: "high" });
   });
 
-  test("plan stays at medium effort", () => {
+  test("plan pin (fallback) is medium", () => {
     expect(spawnSpec("claude-code", "plan")).toMatchObject({ providerId: "claude-code", reasoningLevel: "medium" });
   });
 });

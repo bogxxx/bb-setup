@@ -3,7 +3,6 @@ name: planner
 description: Implementation planner. Use for an ordered, evidence-grounded plan of one assigned change. Does not write code.
 tools: Read, Grep, Glob, Bash, PowerShell
 model: claude-opus-5-5
-effort: medium
 omitClaudeMd: true
 ---
 

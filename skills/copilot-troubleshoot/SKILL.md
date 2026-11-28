@@ -153,7 +153,7 @@ Refresh the catalog first (`copilot-acp --list-models --refresh`), because the c
 
 Fix: change the `model:` line in the agent file in `~/src/bb-setup/copilot/agents/`, to an id from the catalog. Then run `sync.sh -m "<what changed>"`. Start a new Copilot session to pick it up.
 
-Current pins on this machine: `orchestrator`, `planner`, and `reviewer` use `claude-opus-5.5-medium`. `worker` uses `gpt-6.1-terra-medium`. `explorer` uses `claude-haiku-5.5-medium`. `interviewer` uses `gpt-6.1-sol-medium`. All were present in the catalog on 2026-11-09.
+Current pins on this machine: `orchestrator`, `planner`, and `reviewer` use `claude-opus-5.5-medium`. `worker` uses `gpt-6.1-terra-medium`. `explorer` uses `claude-haiku-5.5-medium`. `interviewer` uses `gpt-6.1-sol-medium`. All were present in the catalog on 2026-11-09. BB `spawn plan` and `spawn review` swap the `-medium` suffix to the orchestrator's effort only when the catalog lists that id; the in-process Copilot planner stays `-medium`.
 
 ## 6. Attachments fail over plain HTTP
 

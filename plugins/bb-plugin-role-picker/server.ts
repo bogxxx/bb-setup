@@ -16,6 +16,7 @@ import {
   parseAskArgs,
   parseAskInput,
 } from "./lib/ask.js";
+import { fitEffort, type CatalogModel, type EffortPin } from "./lib/effort.js";
 import {
   ACCOUNT_CATEGORIES,
   blockKey,
@@ -224,6 +225,8 @@ type ReviewRecord = {
   index: number;
   projectId: string;
   environmentId: string | null;
+  // The orchestrator's reasoning level when the review was spawned. Optional: older records have none.
+  orchestratorLevel?: string | null;
 };
 
 /**
@@ -375,6 +378,32 @@ export default async function plugin(bb: BbPluginApi) {
     return { role: readRole(defaultRole) ?? "regular", source: "default" };
   }
 
+  /** The reasoning level a thread runs at, or null when BB cannot read it. */
+  async function orchestratorLevel(threadId: string): Promise<string | null> {
+    try {
+      return (await bb.sdk.threads.defaultExecutionOptions({ threadId }))?.reasoningLevel?.trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The models a provider lists where a spawn runs, or null when that catalog cannot be read. */
+  async function catalogFor(providerId: string, place: { projectId: string; environmentId: string | null }): Promise<CatalogModel[] | null> {
+    try {
+      const res = await Promise.race([
+        bb.sdk.system.executionOptions({
+          providerId,
+          ...(place.environmentId ? { environmentId: place.environmentId } : { projectId: place.projectId }),
+        }),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
+      ]);
+      if (!res || (res.modelLoadError?.providerId === providerId && res.models.length === 0)) return null;
+      return [...res.models, ...res.selectedOnlyModels];
+    } catch {
+      return null;
+    }
+  }
+
   bb.rpc.register(rpcContract, {
     async get_role({ threadId }) {
       if (!threadId) {
@@ -479,6 +508,7 @@ export default async function plugin(bb: BbPluginApi) {
           index: 0,
           projectId: parent.projectId,
           environmentId: parent.environmentId ?? null,
+          orchestratorLevel: await orchestratorLevel(ctx.threadId),
         };
         const spawned = await spawnReviewer(record);
         if (!spawned) {
@@ -496,6 +526,13 @@ export default async function plugin(bb: BbPluginApi) {
       }
       const spec = spawnSpec(parent.providerId, name);
       const defined = spec.agent ? agentDefinition(spec.agent, (message) => bb.log.warn(message)) : undefined;
+      let pin: EffortPin = { model: defined?.model ?? spec.model, reasoningLevel: defined?.reasoningLevel ?? spec.reasoningLevel };
+      // A planner runs at the orchestrator's effort, fitted to its model; the pin is the fallback.
+      const level = name === "plan" ? await orchestratorLevel(ctx.threadId) : null;
+      if (level) {
+        const catalog = await catalogFor(spec.providerId, { projectId: parent.projectId, environmentId: parent.environmentId ?? null });
+        pin = fitEffort(pin, level, catalog, { suffixed: COPILOT_PROVIDERS.has(spec.providerId) });
+      }
       const protocol = name === "contribute" ? workerProtocol() : name === "plan" ? planProtocol() : "";
       const prompt = [
         defined?.body,
@@ -513,8 +550,8 @@ export default async function plugin(bb: BbPluginApi) {
         ...(parent.environmentId
           ? { environment: { type: "reuse" as const, environmentId: parent.environmentId } }
           : { environment: { type: "project-default" as const } }),
-        ...((defined?.model ?? spec.model) ? { model: defined?.model ?? spec.model } : {}),
-        ...((defined?.reasoningLevel ?? spec.reasoningLevel) ? { reasoningLevel: defined?.reasoningLevel ?? spec.reasoningLevel } : {}),
+        ...(pin.model ? { model: pin.model } : {}),
+        ...(pin.reasoningLevel ? { reasoningLevel: pin.reasoningLevel } : {}),
         ...(defined?.serviceTier ? { serviceTier: defined.serviceTier } : {}),
         ...(spec.sessionOptions ? { sessionOptions: spec.sessionOptions } : {}),
         pluginMetadata: { role: "regular" },
@@ -686,6 +723,7 @@ export default async function plugin(bb: BbPluginApi) {
     } catch {
       hostId = null;
     }
+    const catalogs = new Map<string, CatalogModel[] | null>();
     for (let index = record.index; index < record.chain.length; index++) {
       const spec = reviewerAt(record, index);
       const providerId = spec.providerId;
@@ -695,8 +733,13 @@ export default async function plugin(bb: BbPluginApi) {
         continue;
       }
       const defined = spec.agent ? agentDefinition(spec.agent, (message) => bb.log.warn(message)) : undefined;
-      const model = defined?.model ?? spec.model;
-      const reasoningLevel = defined?.reasoningLevel ?? spec.reasoningLevel;
+      let pin: EffortPin = { model: defined?.model ?? spec.model, reasoningLevel: defined?.reasoningLevel ?? spec.reasoningLevel };
+      // The reviewer runs at the level the review was spawned with, fitted to this step's model.
+      if (record.orchestratorLevel) {
+        if (!catalogs.has(providerId)) catalogs.set(providerId, await catalogFor(providerId, record));
+        pin = fitEffort(pin, record.orchestratorLevel, catalogs.get(providerId) ?? null, { suffixed: COPILOT_PROVIDERS.has(providerId) });
+      }
+      const { model, reasoningLevel } = pin;
       const prompt = [defined?.body, "Assignment:\n" + record.body, reviewerProtocol(record.worker, replaces)]
         .filter((part): part is string => Boolean(part))
         .join("\n\n");

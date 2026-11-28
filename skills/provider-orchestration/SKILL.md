@@ -63,7 +63,7 @@ Leave these model lines as written:
 - cantrip-plan and cantrip-review: `gemini-4-neon[effort=medium,fast=false]`
 - cantrip-explore and cantrip-implement: `grok-4.7[reasoning_effort=xhigh,fast=false]`
 
-Do not replace a bracket pin with a picker slug. The BB Cursor catalog does not list `muse-wonder`, `gemini-4-neon`, `grok-4.7`, or `claude-opus-5-5`. Those pins are for Cursor's own subagents. Do not pass them to `bb thread spawn --provider acp-cursor`.
+Do not replace a bracket pin with a picker slug. The BB Cursor catalog does not list `muse-wonder`, `gemini-4-neon`, `grok-4.7`, or `claude-opus-5-5`. Those pins are for Cursor's own subagents. Do not pass them to `bb thread spawn --provider acp-cursor`. In BB, a `spawn plan` or `spawn review` from a Cursor orchestrator runs at that orchestrator's reasoning level instead, passed through unchanged because the catalog does not list Neon.
 
 Inside Cursor, review with `cantrip-review`.
 
@@ -81,20 +81,20 @@ Confirmed catalog ids, all on the 1M context tier:
 | --- | --- | --- |
 | orchestrator | `claude-opus-5.5-medium` | medium |
 | explorer | `claude-haiku-5.5-medium` | medium |
-| planner | `claude-opus-5.5-medium` | medium |
+| planner | `claude-opus-5.5-medium` (in-process); BB `spawn plan` swaps the suffix to a listed `-<level>` id | medium (BB `spawn`: the orchestrator's, fitted) |
 | worker | `gpt-6.1-terra-medium` | medium |
-| reviewer | `claude-opus-5.5-medium` | medium |
+| reviewer | `claude-opus-5.5-medium` (BB `spawn review` swaps the suffix as the planner does) | medium (BB `spawn`: the orchestrator's, fitted) |
 | interviewer (prompt generator) | `gpt-6.1-sol-medium` | medium |
 
 When you start or spawn a Copilot thread with a model, use the 1M catalog id, which carries a `-medium` suffix and no `-standard` (`gpt-6.1-terra-medium`, `claude-opus-5.5-medium`, `claude-haiku-5.5-medium`), and set the effort with the reasoning level. A bare id such as `gpt-6.1-terra` is not in the catalog and the thread silently falls back to `auto`. A `-standard` id runs the 200k tier. The bare ids in `~/.copilot/agents/*.agent.md` front matter are Copilot's own and stay bare.
 
-The reviewer tools are view, grep, glob, skill, bash, and powershell. Its shell is only for `bb thread tell`, `bb thread wait`, `bb thread output`, `bb status`, and read-only git and diff commands. It does not edit. The Copilot orchestrator spawns this agent by name. The BB `spawn` tool with name `review` sets provider `acp-github-copilot-cli`, model `claude-opus-5.5-medium`, reasoning level `medium`, and `--option agent=reviewer`.
+The reviewer tools are view, grep, glob, skill, bash, and powershell. Its shell is only for `bb thread tell`, `bb thread wait`, `bb thread output`, `bb status`, and read-only git and diff commands. It does not edit. The Copilot orchestrator spawns this agent by name. The BB `spawn` tool with name `review` sets provider `acp-github-copilot-cli`, model `claude-opus-5.5-medium` (or `claude-opus-5.5-<level>` when the catalog lists that id), reasoning level the orchestrator's (fitted to the listed levels; `medium` when it cannot be read), and `--option agent=reviewer`.
 
 ## Claude Code (`claude-code`)
 
 Orchestrator: `~/.claude/agents/orchestrator.md`. In BB it calls the `spawn` tool with `explore`, `contribute`, `plan`, and `review`. Its in-process Agent tool subagents are `explorer`, `planner`, and `worker` from `~/.claude/agents`.
 
-Confirmed catalog ids, effort `medium`:
+Confirmed catalog ids. Effort: orchestrator and interviewer `medium`; explorer and worker `high`; the in-process planner inherits the session's effort. In BB, `spawn plan` runs at the orchestrator's effort, fitted to the model (`medium` when that cannot be read).
 
 | Role | Model |
 | --- | --- |
@@ -106,13 +106,19 @@ Confirmed catalog ids, effort `medium`:
 
 Opus and Haiku do not review Claude work. The review is Gemini 4 Argon (`gemini-4-argon` on Antigravity, provider `acp-antigravity`), with Gemini 3.8 Flash (`gemini-3.8-flash` on Antigravity) as a later step in the chain (see the order below). It is `cantrip-review` when the session is Cursor.
 
-Spawn the review with the `spawn` tool, name `review`, and `worker` set to the contribute thread id. The tool sets provider `acp-antigravity`, model `gemini-4-argon`, and reasoning level `medium`. It tries the reviewers in order (Argon, the Copilot `reviewer` on GPT 6.1 Sol, Gemini 3.8 Flash, then Cursor) and skips any model that is out of quota. Do not pass `--option agent=reviewer` (that is the Copilot persona, Opus 5.5), and do not run `bb thread spawn` for the review, because that skips the loop protocol. Allow at most two fix rounds (see Review loop).
+Spawn the review with the `spawn` tool, name `review`, and `worker` set to the contribute thread id. The tool sets provider `acp-antigravity`, model `gemini-4-argon`, and the orchestrator's reasoning level (passed through, since the catalog does not list Argon; `medium` when that cannot be read). It tries the reviewers in order (Argon, the Copilot `reviewer` on GPT 6.1 Sol, Gemini 3.8 Flash, then Cursor) and skips any model that is out of quota. Do not pass `--option agent=reviewer` (that is the Copilot persona, Opus 5.5), and do not run `bb thread spawn` for the review, because that skips the loop protocol. Allow at most two fix rounds (see Review loop).
+
+## Effort in BB spawns
+
+`spawn plan` and `spawn review` run at the calling orchestrator's reasoning level, fitted to the target model's catalog levels (`lib/effort.ts`). A level the model does not list moves to the nearest listed one below it. A model the catalog does not list gets the orchestrator's level as it is. When that level cannot be read, the spawn pins apply (`medium`). Copilot ids swap their `-<level>` suffix only to a listed id. `spawn explore` and `spawn contribute` keep their pins.
+
+Not affected: the in-process Copilot planner (`-medium` in its agent file), the in-process Cursor planner and reviewer (bracket pins), explore and contribute, and the orchestrator and prompt generator levels.
 
 ## Any other provider
 
 Explore, plan, and implement with models from that provider's live catalog. Do not invent a model id. Follow the review rule: the reviewer's family must differ from the worker's.
 
 - Worker is not Gemini: review with Gemini 4 Argon, through the `spawn` tool with name `review` as in Claude Code.
-- Worker is Gemini, for example on Antigravity: the `spawn` tool with name `review` on an Antigravity parent uses the Copilot reviewer persona (provider `acp-github-copilot-cli`, model `claude-opus-5.5-medium`, reasoning level `medium`, `agent=reviewer`). Do not pass `--option agent=reviewer` yourself.
+- Worker is Gemini, for example on Antigravity: the `spawn` tool with name `review` on an Antigravity parent uses the Copilot reviewer persona (provider `acp-github-copilot-cli`, model `claude-opus-5.5-medium`, reasoning level the orchestrator's, fitted to the model (`medium` when it cannot be read), `agent=reviewer`). Do not pass `--option agent=reviewer` yourself.
 
 The `spawn` tool maps `review` for Claude Code, GitHub Copilot, Cursor, and Antigravity parents. For any other parent, `spawn review` runs on the parent's own provider, which is the worker's family, so do not use it for review. Use `bb thread spawn` with the provider and options above, pass `--parent-self`, `--permission-mode full`, and `--parent-notifications stuck`, and write the loop protocol into the prompt yourself: the `REVIEW round` message to the worker, the two-round limit, and the `CLEAN` and `ESCALATE` endings. Say in the report that you did this.
